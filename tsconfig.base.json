@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+
+    // Strict beyond the default preset. This repo's whole argument is that
+    // reliability comes from the type/tool layer rather than from prose, so
+    // the compiler is configured to bite.
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
+
+    // No ambient types unless a package asks for them. TypeScript's
+    // automatic @types discovery does not pick them up through pnpm's
+    // isolated node_modules anyway, and implicit global types leaking
+    // across packages is not a trade worth making.
+    "types": [],
+
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  }
+}

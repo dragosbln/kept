@@ -1,0 +1,30 @@
+packages:
+  - packages/*
+  - apps/*
+
+# Supply-chain gates, declared rather than left to defaults so they show
+# up in review. `minimumReleaseAge` (minutes) refuses versions published
+# in the last 24h — the window in which a compromised release is most
+# likely to still be live. Keep catalog ranges one patch behind rather
+# than adding entries to `minimumReleaseAgeExclude`, which opts a package
+# out of the gate entirely.
+minimumReleaseAge: 1440
+
+# esbuild is a vitest dependency; its install script links the platform
+# binary, so it genuinely needs to run.
+allowBuilds:
+  esbuild: true
+
+# Single source of truth for dependency versions across the workspace.
+# Packages reference these with `"typescript": "catalog:"`.
+catalog:
+  '@hono/node-server': ^2.1.0
+  # Pinned to the Node 24 LTS line to match `engines.node` — typing against
+  # a newer Node than we claim to support is how you ship code that breaks
+  # on your own stated minimum.
+  '@types/node': ^24.13.3
+  hono: ^4.13.1
+  prettier: ^3.9.6
+  tsx: ^4.23.11
+  typescript: ^7.0.2
+  vitest: ^4.1.10

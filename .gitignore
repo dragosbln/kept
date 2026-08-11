@@ -1,0 +1,23 @@
+# local-only context — never commit (repo goes public at launch;
+# git history is forever)
+CLAUDE.local.md
+internal/
+
+# deps / builds
+node_modules/
+dist/
+.next/
+.turbo/
+*.tsbuildinfo
+coverage/
+
+# editors / os
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# env
+.env
+.env.*
+!.env.example
