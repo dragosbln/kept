@@ -8,10 +8,12 @@ adapter over a platform-agnostic core.
 
 ## Repo shape
 
-pnpm monorepo, packages ship under the `@kept` npm scope:
-`@kept/core` · `@kept/adapter-medusa` · `@kept/widget` · `@kept/evals`
-· `@kept/simulator`. Apps: approval inbox + admin (Next.js), agent
-service (Node/Hono).
+pnpm monorepo, packages ship under the `@kept-hq` npm scope (`@kept`
+was already taken on npm — see `internal/registrations.md`):
+`@kept-hq/core` · `@kept-hq/adapter-medusa` · `@kept-hq/widget` ·
+`@kept-hq/evals` · `@kept-hq/simulator`. Apps: approval inbox + admin
+(Next.js), agent service (Node/Hono). Product name stays "Kept" in all
+user-facing copy; the scope is packaging, not brand.
 
 ## Engineering conventions
 
@@ -26,6 +28,15 @@ service (Node/Hono).
   trace internals. 3× stability rule; flaky cases are quarantined the
   day they flake. The CI fault-toggle matrix (faults off → green, each
   fault on → specific reds) must stay meaningful.
+- **Langfuse is a sink for humans, not a source for machines** (locked;
+  see `docs/decisions/0001-eval-assertions-read-the-in-process-trace.md`).
+  Eval assertions read the in-process Trace/span model, never the
+  Langfuse API. The runner executes the agent in-process, and assertion
+  types take our Trace model as input — not Langfuse response shapes.
+  The eval suite and the fault-toggle matrix must run with Postgres
+  alone, no Langfuse containers. Exporter coverage lives in exactly one
+  smoke test outside the matrix, which is the only code in the repo
+  permitted to touch the Langfuse read API.
 - Postgres + pgvector, Drizzle. One database, boring.
 
 ## Working rules for Claude in this repo

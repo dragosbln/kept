@@ -1,0 +1,69 @@
+#!/bin/sh
+# Cheap, non-mutating pre-commit checks. Roughly 1s on the day-1 tree.
+#
+# What belongs here: fast enough to run on every commit, and specific
+# enough that a failure means "fix this now" rather than "look into this
+# sometime".
+#
+# What must NEVER be added here — these belong in CI:
+#   - the eval corpus and the fault-toggle matrix. They need Postgres,
+#     they are slow by design, and their reds are a CI signal. Putting
+#     them on the commit path is how a hook becomes something people
+#     reflexively --no-verify past, at which point it protects nothing.
+#   - the Langfuse exporter smoke test. Needs the full stack and polls a
+#     network API with a timeout (ADR 0001).
+#
+# This hook checks and fails. It never rewrites or re-stages your files:
+# a hook that edits the content you are committing means the thing you
+# reviewed is not the thing that lands.
+#
+# Fix failures with `pnpm format` / `pnpm lint:fix`, then re-stage.
+# Deliberate WIP commit: git commit --no-verify
+#
+# Installed by `pnpm install` (the root "prepare" script points
+# core.hooksPath here). To wire it up by hand:
+#   git config core.hooksPath .githooks
+#
+# Known limit: the staged-scoped steps read files from the working tree,
+# so a partially staged file is checked as it exists on disk rather than
+# as it is staged.
+
+set -u
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+# Lintable source only; prettier handles the rest via --ignore-unknown.
+CODE=$(printf '%s\n' "$STAGED" | grep -E '\.([cm]?[jt]sx?)$' || true)
+
+status=0
+note() { printf '\n[pre-commit] %s\n' "$1"; }
+
+note 'eval boundary (ADR 0001)'
+node scripts/check-eval-boundary.mjs || status=1
+
+if [ -n "$CODE" ]; then
+  note 'lint (staged)'
+  printf '%s\n' "$CODE" | tr '\n' '\0' | xargs -0 pnpm exec oxlint --deny-warnings || status=1
+fi
+
+note 'format (staged)'
+printf '%s\n' "$STAGED" | tr '\n' '\0' | xargs -0 pnpm exec prettier --check --ignore-unknown || status=1
+
+note 'typecheck'
+pnpm -s typecheck || status=1
+
+note 'unit tests'
+pnpm -s test || status=1
+
+if [ "$status" -ne 0 ]; then
+  printf '\n[pre-commit] blocked.\n'
+  printf '[pre-commit] Fix: pnpm format / pnpm lint:fix, then re-stage.\n'
+  printf '[pre-commit] Deliberate WIP commit: git commit --no-verify\n\n'
+fi
+
+exit "$status"

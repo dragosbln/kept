@@ -24,6 +24,7 @@ catalog:
   # on your own stated minimum.
   '@types/node': ^24.13.3
   hono: ^4.13.1
+  oxlint: ^1.77.0
   prettier: ^3.9.6
   tsx: ^4.23.11
   typescript: ^7.0.2
