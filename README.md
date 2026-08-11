@@ -52,13 +52,33 @@ pnpm dev
 
 ### Everyday commands
 
-| Command            | Does                                               |
-| ------------------ | -------------------------------------------------- |
-| `pnpm check`       | Format check, typecheck, and tests across the repo |
-| `pnpm build`       | Build every package                                |
-| `pnpm stack:logs`  | Tail the local stack                               |
-| `pnpm stack:down`  | Stop the stack, keep the data                      |
-| `pnpm stack:reset` | Stop the stack and drop all volumes                |
+| Command            | Does                                                 |
+| ------------------ | ---------------------------------------------------- |
+| `pnpm check`       | Everything the pre-commit hook runs, across the repo |
+| `pnpm lint`        | Lint (oxlint); `pnpm lint:fix` applies safe fixes    |
+| `pnpm format`      | Rewrite formatting (prettier)                        |
+| `pnpm build`       | Build every package                                  |
+| `pnpm stack:logs`  | Tail the local stack                                 |
+| `pnpm stack:down`  | Stop the stack, keep the data                        |
+| `pnpm stack:reset` | Stop the stack and drop all volumes                  |
+
+### Pre-commit hook
+
+`pnpm install` points `core.hooksPath` at [`.githooks/`](.githooks). The
+hook runs the eval-boundary check, lint and format on staged files, a
+typecheck, and the unit tests. Roughly 1.6s for a typical commit and
+1.9s with the whole tree staged; about 1.3s of that is fixed cost —
+mostly process startup for the repo-wide steps, not the checks
+themselves.
+
+It only ever checks; it never rewrites or re-stages your files. Fix
+failures with `pnpm format` / `pnpm lint:fix` and re-stage, or bypass a
+deliberate work-in-progress commit with `git commit --no-verify`.
+
+The eval corpus, the fault-toggle matrix, and the Langfuse exporter
+smoke test are deliberately **not** in the hook. They need the stack,
+they are slow by design, and a slow hook is one people learn to skip.
+They belong in CI.
 
 ## Architecture
 

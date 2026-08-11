@@ -16,7 +16,11 @@
     "clean": "pnpm -r clean",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "pnpm format:check && pnpm typecheck && pnpm test",
+    "lint": "oxlint --deny-warnings",
+    "lint:fix": "oxlint --fix",
+    "check:boundaries": "node scripts/check-eval-boundary.mjs",
+    "check": "pnpm check:boundaries && pnpm lint && pnpm format:check && pnpm typecheck && pnpm test",
+    "prepare": "git rev-parse --git-dir >/dev/null 2>&1 && git config core.hooksPath .githooks || true",
     "dev": "pnpm --filter @kept-hq/agent dev",
     "stack:up": "docker compose up -d",
     "stack:down": "docker compose down",
@@ -25,6 +29,7 @@
     "stack:ps": "docker compose ps"
   },
   "devDependencies": {
+    "oxlint": "catalog:",
     "prettier": "catalog:",
     "typescript": "catalog:"
   }
