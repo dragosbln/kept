@@ -7,10 +7,17 @@
 // eventually-consistent ingestion pipeline — and reds stop meaning "the
 // agent regressed".
 //
-// This covers the mechanically checkable half of the rule. @kept-hq/core is
-// not scanned: core legitimately imports the Langfuse SDK to *export*, and
-// the ban there is on the read surface specifically. Tighten this once the
-// exporter module exists.
+// Two rules, matching the two halves of the ADR:
+//
+// 1. Sealed packages (@kept-hq/evals) must not know Langfuse exists at all:
+//    no dependency, no import, no LANGFUSE_* config read.
+// 2. @kept-hq/core may talk to Langfuse only as a write-side sink. The
+//    exporter speaks plain OTLP over HTTP, so core needs no Langfuse SDK —
+//    any `langfuse` import is a violation — and transport credentials are
+//    injected by the app, so core never reads LANGFUSE_* either. The one
+//    exemption is the smoke test (*.smoke.test.*): per the ADR it is the
+//    only code in the repo allowed to touch the Langfuse read API, and it
+//    necessarily reads LANGFUSE_* config to find the instance.
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, dirname } from 'node:path';
@@ -48,6 +55,28 @@ function* walk(dir) {
 
 const violations = [];
 
+/** Scan one source file for Langfuse imports and LANGFUSE_* config reads. */
+function scanSource(file) {
+  const rel = relative(ROOT, file);
+  const lines = readFileSync(file, 'utf8').split('\n');
+
+  lines.forEach((text, index) => {
+    IMPORT_SPECIFIER.lastIndex = 0;
+    let match;
+    while ((match = IMPORT_SPECIFIER.exec(text)) !== null) {
+      if (LANGFUSE_MODULE.test(match[1])) {
+        violations.push({ file: rel, line: index + 1, detail: `imports "${match[1]}"` });
+      }
+    }
+
+    LANGFUSE_ENV.lastIndex = 0;
+    const envMatch = LANGFUSE_ENV.exec(text);
+    if (envMatch) {
+      violations.push({ file: rel, line: index + 1, detail: `reads ${envMatch[0]}` });
+    }
+  });
+}
+
 for (const pkg of SEALED_PACKAGES) {
   const pkgDir = join(ROOT, pkg);
 
@@ -73,25 +102,16 @@ for (const pkg of SEALED_PACKAGES) {
 
   // 2. Imports and config reads in source.
   for (const file of walk(pkgDir)) {
-    const rel = relative(ROOT, file);
-    const lines = readFileSync(file, 'utf8').split('\n');
-
-    lines.forEach((text, index) => {
-      IMPORT_SPECIFIER.lastIndex = 0;
-      let match;
-      while ((match = IMPORT_SPECIFIER.exec(text)) !== null) {
-        if (LANGFUSE_MODULE.test(match[1])) {
-          violations.push({ file: rel, line: index + 1, detail: `imports "${match[1]}"` });
-        }
-      }
-
-      LANGFUSE_ENV.lastIndex = 0;
-      const envMatch = LANGFUSE_ENV.exec(text);
-      if (envMatch) {
-        violations.push({ file: rel, line: index + 1, detail: `reads ${envMatch[0]}` });
-      }
-    });
+    scanSource(file);
   }
+}
+
+// 3. Core: write-side sink only — no Langfuse imports, no LANGFUSE_* reads.
+//    The smoke test is exempt (the ADR's single permitted read-API caller).
+const SMOKE_TEST_FILE = /\.smoke\.test\.[cm]?[jt]sx?$/;
+for (const file of walk(join(ROOT, 'packages/core/src'))) {
+  if (SMOKE_TEST_FILE.test(file)) continue;
+  scanSource(file);
 }
 
 if (violations.length > 0) {
@@ -105,4 +125,6 @@ if (violations.length > 0) {
   process.exit(1);
 }
 
-console.log(`eval boundary intact (${SEALED_PACKAGES.join(', ')} free of Langfuse)`);
+console.log(
+  `eval boundary intact (${SEALED_PACKAGES.join(', ')} sealed; core write-only toward Langfuse)`,
+);
