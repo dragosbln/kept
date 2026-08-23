@@ -1,6 +1,21 @@
 // --- Vocabulary -------------------------------------------------------------
 
-export type ErrorType = 'timeout' | '500' | '...';
+/**
+ * Well-known error classes; the list grows as fault toggles land. `_OTHER`
+ * is OTel's conventional fallback for "an error outside the known classes".
+ */
+export type WellKnownErrorType = 'timeout' | '_OTHER';
+
+/**
+ * Low-cardinality error identifier, OTel `error.type` style: prefer a
+ * WellKnownErrorType, otherwise any stable identifier (an HTTP status code,
+ * an exception class name) — never free-form message text, so errors stay
+ * groupable in dashboards and eval assertions.
+ */
+export type ErrorType = WellKnownErrorType | (string & {});
+
+/** Which commerce backend served the conversation's tools. */
+export type BackendKind = 'demo' | 'medusa';
 
 /** Lifecycle of a span. `undetermined` = still open when the trace ended. */
 export type SpanStatus = 'in_progress' | 'completed' | 'undetermined' | 'error';
@@ -56,6 +71,8 @@ export type SpanPayloadBase = {
 };
 
 export type ModelCallPayload = {
+  // What this call actually used — the source of truth for eval assertions.
+  // The same fields on TracePayload are only a denormalized filter stamp.
   promptName: string;
   promptVersion: string;
   promptHash: string;
@@ -144,7 +161,11 @@ export type TracePayload = {
   faultToggles: string[];
   startedAt: number;
   duration?: number;
-  backendKind: string;
+  backendKind: BackendKind;
+  // Prompt + provider stamp, denormalized onto the trace as a filter key
+  // ("every conversation that ran prompt X"). The authoritative record of
+  // what each call actually used lives on its model_call span; the two can
+  // disagree once a conversation mixes prompts.
   promptName: string;
   promptVersion: string;
   promptHash: string;
