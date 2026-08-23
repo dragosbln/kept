@@ -71,3 +71,15 @@ imports the Langfuse SDK for _export_, so the ban is on the read surface
 specifically. Once the exporter exists and its location is settled, the
 check can be tightened to confine Langfuse imports in core to that module
 and to assert the read surface appears nowhere but the smoke test.
+
+### Amendment (2026-08-23)
+
+The paragraph above is superseded. The exporter landed as a plain
+`fetch()` OTLP/HTTP transport, so core imports no Langfuse SDK even for
+export, and transport credentials are injected by the app rather than
+read from the environment by core. That let the check go further than
+originally planned: `scripts/check-eval-boundary.mjs` now enforces both
+halves — it seals `@kept-hq/evals` entirely (no dependency, no import,
+no `LANGFUSE_*` read) and scans `packages/core/src` for any Langfuse
+import or `LANGFUSE_*` read, with a single exemption for
+`*.smoke.test.*` files, the ADR's one permitted read-API caller.

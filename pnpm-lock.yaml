@@ -41,6 +41,9 @@ importers:
       prettier:
         specifier: 'catalog:'
         version: 3.9.6
+      tsx:
+        specifier: 'catalog:'
+        version: 4.23.11
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
