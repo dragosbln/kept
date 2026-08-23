@@ -8,7 +8,7 @@
 // sweep.
 
 export { Trace } from './trace.js';
-export type { SpanBase, ModelCallSpan, ToolExecutionSpan, TurnSpan } from './span.js';
+export type { AnySpan, ModelCallSpan, SpanBase, ToolExecutionSpan, TurnSpan } from './span.js';
 export type {
   BackendKind,
   CompletedSpanPayload,
