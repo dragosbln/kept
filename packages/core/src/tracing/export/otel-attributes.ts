@@ -1,3 +1,15 @@
+// Attribute vocabulary for the export path.
+//
+// `otelAttributes` holds OTel GenAI semantic-convention names. The GenAI
+// conventions are still moving (no stable release to pin a version against),
+// so `semConvCommitSha` records the exact semantic-conventions commit these
+// names were copied from.
+//
+// `langfuseAttributes` holds Langfuse's product-specific names. The exporter
+// dual-emits both vocabularies: gen_ai.* keeps traces portable to any OTLP
+// consumer, langfuse.* drives rendering (input/output panes, session
+// grouping, metadata).
+
 export const semConvCommitSha = '8c1b98a376e91d422726ccf33bef051fd9ce4b25';
 
 export const otelAttributes = {
@@ -18,7 +30,7 @@ export const otelAttributes = {
   toolArguments: 'gen_ai.tool.call.arguments',
   toolResult: 'gen_ai.tool.call.result',
   toolCallId: 'gen_ai.tool.call.id',
-};
+} as const;
 
 export const langfuseAttributes = {
   input: 'langfuse.observation.input',
@@ -31,4 +43,4 @@ export const langfuseAttributes = {
   faultToggles: 'langfuse.trace.metadata.faultToggles',
   backendKind: 'langfuse.trace.metadata.backendKind',
   outcomeType: 'langfuse.observation.metadata.outcomeType',
-};
+} as const;

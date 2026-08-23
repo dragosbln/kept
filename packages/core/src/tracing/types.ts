@@ -44,10 +44,6 @@ export type Message = {
 // the span opens) and the End subset (knowable only once the work is done).
 // End is the source of truth; Start is derived from it, so the two always
 // partition the full payload.
-//
-// NOTE: kind payloads must never reuse a field name from SpanPayloadBase —
-// a collision makes that union member uninhabited and TS reports the error
-// on `kind`, not on the colliding field.
 
 export type SpanPayloadBase = {
   id: string;
@@ -106,18 +102,34 @@ export type EndTurnPayload = Pick<TurnPayload, 'outcome'>;
 
 export type StartTurnPayload = Omit<TurnPayload, keyof EndTurnPayload>;
 
-export type SpanKindPayload =
-  | ({ kind: 'model_call' } & ModelCallPayload)
-  | ({ kind: 'tool_execution' } & ToolExecutionPayload)
-  | ({ kind: 'turn' } & TurnPayload);
+/**
+ * Compile-time guard: a kind payload must not reuse a SpanPayloadBase field
+ * name (or `kind`). A collision would make that SpanPayload union member
+ * uninhabited, with TS reporting the error far away on `kind`; this
+ * constraint surfaces it here instead, naming the offending payload.
+ */
+type DisjointFromBase<
+  T extends { [K in Extract<keyof T, keyof SpanPayloadBase | 'kind'>]: never },
+> = T;
 
-export type SpanTypes = SpanKindPayload['kind'];
+export type SpanKindPayload =
+  | ({ kind: 'model_call' } & DisjointFromBase<ModelCallPayload>)
+  | ({ kind: 'tool_execution' } & DisjointFromBase<ToolExecutionPayload>)
+  | ({ kind: 'turn' } & DisjointFromBase<TurnPayload>);
+
+export type SpanKind = SpanKindPayload['kind'];
 
 /** The exported span shape — the contract eval assertions depend on. */
 export type SpanPayload = SpanPayloadBase & SpanKindPayload;
 
-/** A span as recorded in a CompletedTrace: swept, so duration is always stamped. */
-export type CompletedSpanPayload = SpanPayload & { duration: number };
+/** Span statuses that can remain once a trace has ended: the sweep closes everything open. */
+export type SettledSpanStatus = Exclude<SpanStatus, 'in_progress'>;
+
+/** A span as recorded in a CompletedTrace: swept, so duration is stamped and nothing is still in progress. */
+export type CompletedSpanPayload = SpanPayload & {
+  duration: number;
+  status: SettledSpanStatus;
+};
 
 // Narrowed per-kind members, for callers holding a concrete span.
 export type ModelCallSpanPayload = Extract<SpanPayload, { kind: 'model_call' }>;

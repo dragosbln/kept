@@ -4,37 +4,16 @@
 // smoke test (see ADR 0001).
 //
 //   pnpm stack:up
-//   pnpm demo:trace          # tsx --env-file=.env scripts/trace-demo.ts
-//
-// Expects the hand-written transport `LangfuseExporter` to exist in
-// packages/core/src/tracing/export/langfuse.ts; exits with a pointer if it
-// doesn't yet.
+//   pnpm demo:trace          # tsx --env-file-if-exists=.env scripts/trace-demo.ts
 
 import { setTimeout as sleep } from 'node:timers/promises';
-import { Trace, type CompletedTrace, type Message } from '../packages/core/src/tracing/index.ts';
+import { LangfuseExporter, Trace, type Message } from '../packages/core/src/tracing/index.ts';
 
 const { LANGFUSE_URL, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY } = process.env;
 if (!LANGFUSE_URL || !LANGFUSE_PUBLIC_KEY || !LANGFUSE_SECRET_KEY) {
   console.error(
     'Missing LANGFUSE_URL / LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY.',
     'Run via `pnpm demo:trace` with a populated .env (cp .env.example .env).',
-  );
-  process.exit(1);
-}
-
-type ExporterConstructor = new (config: {
-  baseUrl: string;
-  publicKey: string;
-  secretKey: string;
-}) => { export(trace: CompletedTrace): void; flush(): Promise<void> };
-
-const langfuseModule = (await import('../packages/core/src/tracing/export/langfuse.ts')) as {
-  LangfuseExporter?: ExporterConstructor;
-};
-if (!langfuseModule.LangfuseExporter) {
-  console.error(
-    'LangfuseExporter is not implemented yet — write the transport class in',
-    'packages/core/src/tracing/export/langfuse.ts (implements TraceExporter), then rerun.',
   );
   process.exit(1);
 }
@@ -143,7 +122,7 @@ const completed = trace.end();
 
 // --- Export ------------------------------------------------------------------
 
-const exporter = new langfuseModule.LangfuseExporter({
+const exporter = new LangfuseExporter({
   baseUrl: LANGFUSE_URL,
   publicKey: LANGFUSE_PUBLIC_KEY,
   secretKey: LANGFUSE_SECRET_KEY,
