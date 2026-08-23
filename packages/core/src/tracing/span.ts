@@ -6,6 +6,7 @@ import type {
   ErrorType,
   ModelCallPayload,
   ModelCallSpanPayload,
+  SettledSpanStatus,
   SpanPayload,
   SpanPayloadBase,
   SpanStatus,
@@ -14,7 +15,6 @@ import type {
   StartTurnPayload,
   ToolExecutionPayload,
   ToolExecutionSpanPayload,
-  TracePayload,
   TurnPayload,
   TurnSpanPayload,
 } from './types.js';
@@ -23,10 +23,10 @@ export abstract class SpanBase {
   protected basePayload: SpanPayloadBase;
   private startMark: number; // monotonic twin of basePayload.startedAt
 
-  constructor(tracePayload: TracePayload, parentSpanId: string | null) {
+  constructor(traceId: string, parentSpanId: string | null) {
     this.basePayload = {
       id: crypto.randomUUID(),
-      traceId: tracePayload.id,
+      traceId,
       parentId: parentSpanId,
       startedAt: Date.now(),
       status: 'in_progress',
@@ -45,45 +45,43 @@ export abstract class SpanBase {
   abstract snapshot(): SpanPayload;
 
   /** Idempotent: the first completion wins; later calls are no-ops. */
-  protected complete(status: SpanStatus) {
+  protected complete(status: SettledSpanStatus): void {
     if (this.basePayload.status !== 'in_progress') return;
     this.basePayload.duration = performance.now() - this.startMark;
     this.basePayload.status = status;
   }
 
-  error(type: ErrorType) {
+  error(type: ErrorType): void {
     if (this.status !== 'in_progress') return;
     this.basePayload.errorType = type;
     this.complete('error');
   }
 
-  abandonIfInProgress() {
+  abandonIfInProgress(): void {
     this.complete('undetermined');
   }
 
   /**
    * Sweep hook for Trace.end(): abandons the span if still open, then
-   * snapshots. Only complete() moves status off in_progress and it always
-   * stamps duration, so the assertion below is backed by an invariant.
+   * snapshots. complete() is the only transition out of in_progress and it
+   * always stamps duration, so the guard below is unreachable — it exists
+   * to fail loudly (and convince TS) rather than emit an unsettled span.
    */
   finalize(): CompletedSpanPayload {
     this.abandonIfInProgress();
-    return {
-      ...this.snapshot(),
-      duration: this.basePayload.duration!,
-    };
+    const { status, duration } = this.basePayload;
+    if (status === 'in_progress' || duration === undefined) {
+      throw new Error(`span ${this.basePayload.id}: still open after sweep`);
+    }
+    return { ...this.snapshot(), status, duration };
   }
 }
 
 export class ModelCallSpan extends SpanBase {
   private payload: ModelCallPayload;
 
-  constructor(
-    tracePayload: TracePayload,
-    parentSpanId: string | null,
-    payload: StartModelCallPayload,
-  ) {
-    super(tracePayload, parentSpanId);
+  constructor(traceId: string, parentSpanId: string | null, payload: StartModelCallPayload) {
+    super(traceId, parentSpanId);
     this.payload = payload;
   }
 
@@ -95,7 +93,7 @@ export class ModelCallSpan extends SpanBase {
     };
   }
 
-  end(payload: EndModelCallPayload) {
+  end(payload: EndModelCallPayload): void {
     if (this.status !== 'in_progress') return;
     this.payload = {
       ...this.payload,
@@ -108,12 +106,8 @@ export class ModelCallSpan extends SpanBase {
 export class ToolExecutionSpan extends SpanBase {
   private payload: ToolExecutionPayload;
 
-  constructor(
-    tracePayload: TracePayload,
-    parentSpanId: string | null,
-    payload: StartToolExecutionPayload,
-  ) {
-    super(tracePayload, parentSpanId);
+  constructor(traceId: string, parentSpanId: string | null, payload: StartToolExecutionPayload) {
+    super(traceId, parentSpanId);
     this.payload = payload;
   }
 
@@ -125,7 +119,7 @@ export class ToolExecutionSpan extends SpanBase {
     };
   }
 
-  end(payload: EndToolExecutionPayload) {
+  end(payload: EndToolExecutionPayload): void {
     if (this.status !== 'in_progress') return;
     this.payload = {
       ...this.payload,
@@ -138,8 +132,8 @@ export class ToolExecutionSpan extends SpanBase {
 export class TurnSpan extends SpanBase {
   private payload: TurnPayload;
 
-  constructor(tracePayload: TracePayload, parentSpanId: string | null, payload: StartTurnPayload) {
-    super(tracePayload, parentSpanId);
+  constructor(traceId: string, parentSpanId: string | null, payload: StartTurnPayload) {
+    super(traceId, parentSpanId);
     this.payload = payload;
   }
 
@@ -151,7 +145,7 @@ export class TurnSpan extends SpanBase {
     };
   }
 
-  end(payload: EndTurnPayload) {
+  end(payload: EndTurnPayload): void {
     if (this.status !== 'in_progress') return;
     this.payload = {
       ...this.payload,

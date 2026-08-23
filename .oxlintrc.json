@@ -14,7 +14,16 @@
     "eqeqeq": "error",
     "no-var": "error",
     "prefer-const": "error",
-    "unicorn/require-module-specifiers": "off"
+    "unicorn/require-module-specifiers": "off",
+    "typescript/explicit-function-return-type": [
+      "error",
+      {
+        "allowExpressions": true,
+        "allowTypedFunctionExpressions": true,
+        "allowHigherOrderFunctions": true,
+        "allowIIFEs": true
+      }
+    ]
   },
   "ignorePatterns": ["**/dist/**", "**/node_modules/**", "**/coverage/**"]
 }

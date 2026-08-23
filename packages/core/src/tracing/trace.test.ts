@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { Trace } from './trace.js';
-import { mapTraceToOTLPEnvelope } from './export/langfuse.js';
+import { mapTraceToOTLPEnvelope } from './export/otlp.js';
 import type { StartModelCallPayload } from './types.js';
 
 const traceConfig = {
@@ -29,7 +29,7 @@ const modelCallStart: StartModelCallPayload = {
   inputMessages: [{ role: 'user', parts: [{ type: 'text', content: 'Where is my order?' }] }],
 };
 
-function recordOneConversation() {
+function recordOneConversation(): Trace {
   const trace = new Trace(traceConfig);
   const turn = trace.startTurnSpan(null, { customerInput: 'Where is my order?' });
 

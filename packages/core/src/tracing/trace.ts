@@ -24,20 +24,23 @@ export class Trace {
     this.startMark = performance.now();
   }
 
-  startModelCallSpan(parentSpanId: string | null, payload: StartModelCallPayload) {
-    const span = new ModelCallSpan(this.payload, parentSpanId, payload);
+  startModelCallSpan(parentSpanId: string | null, payload: StartModelCallPayload): ModelCallSpan {
+    const span = new ModelCallSpan(this.payload.id, parentSpanId, payload);
     this.spans.push(span);
     return span;
   }
 
-  startToolExecutionSpan(parentSpanId: string | null, payload: StartToolExecutionPayload) {
-    const span = new ToolExecutionSpan(this.payload, parentSpanId, payload);
+  startToolExecutionSpan(
+    parentSpanId: string | null,
+    payload: StartToolExecutionPayload,
+  ): ToolExecutionSpan {
+    const span = new ToolExecutionSpan(this.payload.id, parentSpanId, payload);
     this.spans.push(span);
     return span;
   }
 
-  startTurnSpan(parentSpanId: string | null, payload: StartTurnPayload) {
-    const span = new TurnSpan(this.payload, parentSpanId, payload);
+  startTurnSpan(parentSpanId: string | null, payload: StartTurnPayload): TurnSpan {
+    const span = new TurnSpan(this.payload.id, parentSpanId, payload);
     this.spans.push(span);
     return span;
   }
