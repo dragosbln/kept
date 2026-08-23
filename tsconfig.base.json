@@ -14,6 +14,7 @@
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
     "exactOptionalPropertyTypes": true,
+    "noImplicitReturns": true,
 
     // No ambient types unless a package asks for them. TypeScript's
     // automatic @types discovery does not pick them up through pnpm's
