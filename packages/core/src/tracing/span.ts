@@ -19,11 +19,25 @@ import type {
   TurnSpanPayload,
 } from './types.js';
 
-export abstract class SpanBase {
+/**
+ * Lifecycle + payload protocol, written once. The three parameters mirror
+ * the payload partition in types.ts:
+ *
+ *   TFull  — the complete payload (End fields optional)
+ *   TStart — the subset knowable when the span opens
+ *   TEnd   — the subset knowable only once the work is done
+ *
+ * `TStart extends TFull` holds because every End field is optional in the
+ * full payload. If an End field is ever made required, the partition is
+ * broken — and the subclass's `extends` clause stops compiling. The
+ * constraint IS the partition invariant, checked by the compiler.
+ */
+export abstract class SpanBase<TFull, TStart extends TFull, TEnd extends Partial<TFull>> {
   protected basePayload: SpanPayloadBase;
+  protected payload: TFull;
   private startMark: number; // monotonic twin of basePayload.startedAt
 
-  constructor(traceId: string, parentSpanId: string | null) {
+  constructor(traceId: string, parentSpanId: string | null, payload: TStart) {
     this.basePayload = {
       id: crypto.randomUUID(),
       traceId,
@@ -31,6 +45,7 @@ export abstract class SpanBase {
       startedAt: Date.now(),
       status: 'in_progress',
     };
+    this.payload = payload;
     this.startMark = performance.now();
   }
 
@@ -49,6 +64,13 @@ export abstract class SpanBase {
     if (this.basePayload.status !== 'in_progress') return;
     this.basePayload.duration = performance.now() - this.startMark;
     this.basePayload.status = status;
+  }
+
+  /** First completion wins: end() after error(), or a second end(), is a no-op. */
+  end(payload: TEnd): void {
+    if (this.status !== 'in_progress') return;
+    this.payload = { ...this.payload, ...payload };
+    this.complete('completed');
   }
 
   error(type: ErrorType): void {
@@ -77,14 +99,11 @@ export abstract class SpanBase {
   }
 }
 
-export class ModelCallSpan extends SpanBase {
-  private payload: ModelCallPayload;
-
-  constructor(traceId: string, parentSpanId: string | null, payload: StartModelCallPayload) {
-    super(traceId, parentSpanId);
-    this.payload = payload;
-  }
-
+export class ModelCallSpan extends SpanBase<
+  ModelCallPayload,
+  StartModelCallPayload,
+  EndModelCallPayload
+> {
   snapshot(): ModelCallSpanPayload {
     return {
       kind: 'model_call',
@@ -92,25 +111,13 @@ export class ModelCallSpan extends SpanBase {
       ...this.payload,
     };
   }
-
-  end(payload: EndModelCallPayload): void {
-    if (this.status !== 'in_progress') return;
-    this.payload = {
-      ...this.payload,
-      ...payload,
-    };
-    this.complete('completed');
-  }
 }
 
-export class ToolExecutionSpan extends SpanBase {
-  private payload: ToolExecutionPayload;
-
-  constructor(traceId: string, parentSpanId: string | null, payload: StartToolExecutionPayload) {
-    super(traceId, parentSpanId);
-    this.payload = payload;
-  }
-
+export class ToolExecutionSpan extends SpanBase<
+  ToolExecutionPayload,
+  StartToolExecutionPayload,
+  EndToolExecutionPayload
+> {
   snapshot(): ToolExecutionSpanPayload {
     return {
       kind: 'tool_execution',
@@ -118,25 +125,9 @@ export class ToolExecutionSpan extends SpanBase {
       ...this.payload,
     };
   }
-
-  end(payload: EndToolExecutionPayload): void {
-    if (this.status !== 'in_progress') return;
-    this.payload = {
-      ...this.payload,
-      ...payload,
-    };
-    this.complete('completed');
-  }
 }
 
-export class TurnSpan extends SpanBase {
-  private payload: TurnPayload;
-
-  constructor(traceId: string, parentSpanId: string | null, payload: StartTurnPayload) {
-    super(traceId, parentSpanId);
-    this.payload = payload;
-  }
-
+export class TurnSpan extends SpanBase<TurnPayload, StartTurnPayload, EndTurnPayload> {
   snapshot(): TurnSpanPayload {
     return {
       kind: 'turn',
@@ -144,13 +135,7 @@ export class TurnSpan extends SpanBase {
       ...this.payload,
     };
   }
-
-  end(payload: EndTurnPayload): void {
-    if (this.status !== 'in_progress') return;
-    this.payload = {
-      ...this.payload,
-      ...payload,
-    };
-    this.complete('completed');
-  }
 }
+
+/** Any span handle a Trace can hold — the closed set matching SpanKindPayload. */
+export type AnySpan = ModelCallSpan | ToolExecutionSpan | TurnSpan;

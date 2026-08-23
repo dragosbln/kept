@@ -1,4 +1,4 @@
-import { ModelCallSpan, ToolExecutionSpan, TurnSpan, type SpanBase } from './span.js';
+import { ModelCallSpan, ToolExecutionSpan, TurnSpan, type AnySpan } from './span.js';
 import type {
   CompletedTrace,
   StartModelCallPayload,
@@ -16,7 +16,7 @@ function isDevMode(): boolean {
 
 export class Trace {
   private payload: TracePayload;
-  private spans: SpanBase[] = [];
+  private spans: AnySpan[] = [];
   private startMark: number;
   private completedTrace?: CompletedTrace;
 
