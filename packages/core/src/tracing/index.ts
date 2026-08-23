@@ -10,6 +10,7 @@
 export { Trace } from './trace.js';
 export type { SpanBase, ModelCallSpan, ToolExecutionSpan, TurnSpan } from './span.js';
 export type {
+  BackendKind,
   CompletedSpanPayload,
   CompletedTrace,
   EndModelCallPayload,
@@ -38,9 +39,11 @@ export type {
   TracePayload,
   TurnPayload,
   TurnSpanPayload,
+  WellKnownErrorType,
 } from './types.js';
 export type { TraceExporter } from './export/exporter.js';
 export { LangfuseExporter } from './export/langfuse.js';
+export type { ExportErrorEvent, LangfuseExporterConfig } from './export/langfuse.js';
 export { mapTraceToOTLPEnvelope } from './export/otlp.js';
 export type { OtlpAttribute, OtlpEnvelope, OtlpSpan } from './export/otlp.js';
 export { langfuseAttributes, otelAttributes, semConvCommitSha } from './export/otel-attributes.js';

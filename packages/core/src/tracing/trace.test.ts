@@ -4,12 +4,12 @@
 // id formats, nanosecond conversion, undefined-dropping, and the
 // convention-shape message translation (args → arguments).
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Trace } from './trace.js';
 import { mapTraceToOTLPEnvelope } from './export/otlp.js';
-import type { StartModelCallPayload } from './types.js';
+import type { StartModelCallPayload, TraceConfig } from './types.js';
 
-const traceConfig = {
+const traceConfig: TraceConfig = {
   sessionId: 'session-1',
   providerName: 'anthropic',
   promptName: 'support-agent',
@@ -106,13 +106,36 @@ describe('Trace recorder', () => {
     expect(span).not.toHaveProperty('outputMessages');
   });
 
-  it('end() is idempotent and freezes the span list', () => {
+  it('end() is idempotent and freezes the trace', () => {
     const trace = recordOneConversation();
     const first = trace.end();
-    trace.startTurnSpan(null, { customerInput: 'late arrival' });
     const second = trace.end();
     expect(second).toBe(first);
     expect(first.spans).toHaveLength(4);
+  });
+
+  describe('starting a span after end()', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('throws outside production, where an agent-loop bug should be loud', () => {
+      vi.stubEnv('NODE_ENV', 'development');
+      const trace = recordOneConversation();
+      trace.end();
+      expect(() => trace.startTurnSpan(null, { customerInput: 'late arrival' })).toThrow(
+        /after end\(\)/,
+      );
+    });
+
+    it('is silently dropped in production: tracing never breaks a live conversation', () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      const trace = recordOneConversation();
+      const first = trace.end();
+      trace.startTurnSpan(null, { customerInput: 'late arrival' });
+      expect(trace.end()).toBe(first);
+      expect(first.spans).toHaveLength(4);
+    });
   });
 });
 
