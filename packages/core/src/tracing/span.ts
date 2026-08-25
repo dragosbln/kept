@@ -20,19 +20,25 @@ import type {
 } from './types.js';
 
 /**
- * Lifecycle + payload protocol, written once. The three parameters mirror
+ * Lifecycle + payload protocol, written once. The four parameters mirror
  * the payload partition in types.ts:
  *
  *   TFull  — the complete payload (End fields optional)
  *   TStart — the subset knowable when the span opens
  *   TEnd   — the subset knowable only once the work is done
+ *   TError - the particular set of errors a span can produce
  *
  * `TStart extends TFull` holds because every End field is optional in the
  * full payload. If an End field is ever made required, the partition is
  * broken — and the subclass's `extends` clause stops compiling. The
  * constraint IS the partition invariant, checked by the compiler.
  */
-export abstract class SpanBase<TFull, TStart extends TFull, TEnd extends Partial<TFull>> {
+export abstract class SpanBase<
+  TFull,
+  TStart extends TFull,
+  TEnd extends Partial<TFull>,
+  TError extends ErrorType = ErrorType,
+> {
   protected basePayload: SpanPayloadBase;
   protected payload: TFull;
   private startMark: number; // monotonic twin of basePayload.startedAt
@@ -73,7 +79,7 @@ export abstract class SpanBase<TFull, TStart extends TFull, TEnd extends Partial
     this.complete('completed');
   }
 
-  error(type: ErrorType): void {
+  error(type: TError): void {
     if (this.status !== 'in_progress') return;
     this.basePayload.errorType = type;
     this.complete('error');
@@ -127,7 +133,12 @@ export class ToolExecutionSpan extends SpanBase<
   }
 }
 
-export class TurnSpan extends SpanBase<TurnPayload, StartTurnPayload, EndTurnPayload> {
+/**
+ * error() is not callable on TurnSpan (enforced by TError = never).
+ * A turn always ends as "completed" with an outcome. The outcome can be "failed".
+ * The exact failure (when one exists) lies with the model/tool span where the failure originated
+ * */
+export class TurnSpan extends SpanBase<TurnPayload, StartTurnPayload, EndTurnPayload, never> {
   snapshot(): TurnSpanPayload {
     return {
       kind: 'turn',

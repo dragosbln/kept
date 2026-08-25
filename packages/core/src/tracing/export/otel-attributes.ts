@@ -43,4 +43,5 @@ export const langfuseAttributes = {
   faultToggles: 'langfuse.trace.metadata.faultToggles',
   backendKind: 'langfuse.trace.metadata.backendKind',
   outcomeType: 'langfuse.observation.metadata.outcomeType',
+  outcomeReason: 'langfuse.observation.metadata.outcomeReason',
 } as const;
