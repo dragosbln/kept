@@ -204,7 +204,6 @@ function mapSpanAttributes(trace: CompletedTrace, span: CompletedSpanPayload): O
         str(otelAttributes.model, span.model),
         str(otelAttributes.providerName, span.providerName),
         double(otelAttributes.temperature, span.temperature),
-        int(otelAttributes.topK, span.topK),
         int(otelAttributes.inputTokens, span.inputTokens),
         int(otelAttributes.outputTokens, span.outputTokens),
         str(langfuseAttributes.input, inputMessages),
