@@ -78,7 +78,6 @@ export type ModelCallPayload = {
   promptHash: string;
   providerName: string;
   model: string;
-  topK: number;
   temperature: number;
   inputTokens?: number;
   outputTokens?: number;
