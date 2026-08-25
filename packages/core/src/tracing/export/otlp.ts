@@ -152,9 +152,21 @@ function toOtlpMessages(messages: Message[]): OtlpMessage[] {
 }
 
 function getTurnOutputMessage(span: TurnSpanPayload): string | undefined {
-  if (span.outcome?.type === 'reply') {
-    return span.outcome.message;
+  if (!span.outcome) {
+    return undefined;
   }
+  if (span.outcome.type === 'reply') {
+    return span.outcome.message;
+  } else {
+    return '';
+  }
+}
+
+function getTurnOutputReason(span: TurnSpanPayload): string | undefined {
+  if (span.outcome?.type === 'failed') {
+    return span.outcome.reason;
+  }
+
   return undefined;
 }
 
@@ -180,6 +192,7 @@ function mapSpanAttributes(trace: CompletedTrace, span: CompletedSpanPayload): O
         str(langfuseAttributes.input, span.customerInput),
         str(langfuseAttributes.output, getTurnOutputMessage(span)),
         str(langfuseAttributes.outcomeType, span.outcome?.type),
+        str(langfuseAttributes.outcomeReason, getTurnOutputReason(span)),
       ];
     case 'model_call': {
       const inputMessages = JSON.stringify(toOtlpMessages(span.inputMessages));

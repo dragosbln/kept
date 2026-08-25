@@ -105,17 +105,27 @@ export type EndToolExecutionPayload = Pick<ToolExecutionPayload, 'resultState' |
 
 export type StartToolExecutionPayload = Omit<ToolExecutionPayload, keyof EndToolExecutionPayload>;
 
-export type TurnOutcome = {
-  type: 'reply';
-  message: string;
-};
+export type TurnFailureReason = 'internal' | 'max_turns' | 'refusal' | 'max_tokens';
+
+export type TurnOutcome =
+  | {
+      type: 'reply';
+      message: string;
+    }
+  | {
+      type: 'failed';
+      reason: TurnFailureReason;
+    }
+  | {
+      type: 'conversation_full';
+    };
 
 export type TurnPayload = {
   customerInput: string;
   outcome?: TurnOutcome;
 };
 
-export type EndTurnPayload = Pick<TurnPayload, 'outcome'>;
+export type EndTurnPayload = Required<Pick<TurnPayload, 'outcome'>>;
 
 export type StartTurnPayload = Omit<TurnPayload, keyof EndTurnPayload>;
 
