@@ -1,5 +1,3 @@
-// class InMemoryConversationStore
-
 import type { Message } from '../messages.js';
 import type { ConversationStore } from './conversation-store.js';
 import type { Conversation } from './types.js';

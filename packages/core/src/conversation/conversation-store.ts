@@ -1,5 +1,3 @@
-// interface ConversationStore
-
 import type { Message } from '../messages.js';
 import type { Conversation } from './types.js';
 
