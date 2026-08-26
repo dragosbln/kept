@@ -3,15 +3,8 @@
 // every span dual-emits the portable gen_ai.* attributes and the langfuse.*
 // attributes that drive rendering (input/output panes, session grouping).
 
-import type {
-  CompletedSpanPayload,
-  CompletedTrace,
-  Message,
-  MessageRole,
-  SpanKind,
-  ToolArgs,
-  TurnSpanPayload,
-} from '../types.js';
+import type { Message, MessageRole, ToolArgs } from '../../messages.js';
+import type { CompletedSpanPayload, CompletedTrace, SpanKind, TurnSpanPayload } from '../types.js';
 import { langfuseAttributes, otelAttributes } from './otel-attributes.js';
 
 const SERVICE_NAME = 'kept-agent';
