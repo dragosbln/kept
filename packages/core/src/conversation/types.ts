@@ -1,6 +1,6 @@
-import type { Message } from "../messages.js";
+import type { Message } from '../messages.js';
 
 export type Conversation = {
-    id: string;
-    messages: Message[];
-}
+  id: string;
+  messages: Message[];
+};
