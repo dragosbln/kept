@@ -5,3 +5,5 @@
 // Re-export from here as each module ships.
 
 export * from './tracing/index.js';
+export * from './conversation/index.js';
+export * from './messages.js';
