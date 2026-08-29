@@ -44,11 +44,6 @@ const int = (key: string, value: number | undefined): OtlpAttribute => ({
   key,
   value: { intValue: value },
 });
-const double = (key: string, value: number | undefined): OtlpAttribute => ({
-  key,
-  value: { doubleValue: value },
-});
-
 function dropUndefinedAttributes(attributes: OtlpAttribute[]): OtlpAttribute[] {
   return attributes.filter(
     ({ value }) =>
@@ -196,7 +191,6 @@ function mapSpanAttributes(trace: CompletedTrace, span: CompletedSpanPayload): O
         ...attributes,
         str(otelAttributes.model, span.model),
         str(otelAttributes.providerName, span.providerName),
-        double(otelAttributes.temperature, span.temperature),
         int(otelAttributes.inputTokens, span.inputTokens),
         int(otelAttributes.outputTokens, span.outputTokens),
         str(langfuseAttributes.input, inputMessages),

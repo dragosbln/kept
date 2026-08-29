@@ -20,7 +20,6 @@ export const otelAttributes = {
   promptName: 'gen_ai.prompt.name',
   promptVersion: 'gen_ai.prompt.version',
   model: 'gen_ai.request.model',
-  temperature: 'gen_ai.request.temperature',
   inputTokens: 'gen_ai.usage.input_tokens',
   outputTokens: 'gen_ai.usage.output_tokens',
   inputMessages: 'gen_ai.input.messages',

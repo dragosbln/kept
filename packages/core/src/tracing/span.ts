@@ -1,9 +1,9 @@
+import type { ErrorType } from '../messages.js';
 import type {
   CompletedSpanPayload,
   EndModelCallPayload,
   EndToolExecutionPayload,
   EndTurnPayload,
-  ErrorType,
   ModelCallPayload,
   ModelCallSpanPayload,
   SettledSpanStatus,
