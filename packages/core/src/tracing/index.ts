@@ -16,7 +16,6 @@ export type {
   EndModelCallPayload,
   EndToolExecutionPayload,
   EndTurnPayload,
-  ErrorType,
   ModelCallPayload,
   ModelCallSpanPayload,
   SettledSpanStatus,
@@ -34,7 +33,6 @@ export type {
   TracePayload,
   TurnPayload,
   TurnSpanPayload,
-  WellKnownErrorType,
 } from './types.js';
 export type { TraceExporter } from './export/exporter.js';
 export { LangfuseExporter } from './export/langfuse.js';

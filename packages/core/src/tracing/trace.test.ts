@@ -24,7 +24,6 @@ const modelCallStart: StartModelCallPayload = {
   promptHash: 'cafebabe',
   providerName: 'anthropic',
   model: 'claude-sonnet-5',
-  temperature: 0.2,
   inputMessages: [{ role: 'user', parts: [{ type: 'text', content: 'Where is my order?' }] }],
 };
 

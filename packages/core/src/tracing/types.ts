@@ -1,20 +1,6 @@
 // --- Vocabulary -------------------------------------------------------------
 
-import type { Message, ToolArgs, ToolResultState } from '../messages.js';
-
-/**
- * Well-known error classes; the list grows as fault toggles land. `_OTHER`
- * is OTel's conventional fallback for "an error outside the known classes".
- */
-export type WellKnownErrorType = 'timeout' | '_OTHER';
-
-/**
- * Low-cardinality error identifier, OTel `error.type` style: prefer a
- * WellKnownErrorType, otherwise any stable identifier (an HTTP status code,
- * an exception class name) — never free-form message text, so errors stay
- * groupable in dashboards and eval assertions.
- */
-export type ErrorType = WellKnownErrorType | (string & {});
+import type { ErrorType, Message, ToolArgs, ToolResultState } from '../messages.js';
 
 /** Which commerce backend served the conversation's tools. */
 export type BackendKind = 'demo' | 'medusa';
@@ -46,7 +32,6 @@ export type ModelCallPayload = {
   promptHash: string;
   providerName: string;
   model: string;
-  temperature: number;
   inputTokens?: number;
   outputTokens?: number;
   inputMessages: Message[];
