@@ -7,3 +7,7 @@
 export * from './tracing/index.js';
 export * from './conversation/index.js';
 export * from './messages.js';
+export * from './prompt/index.js';
+export * from './tools/index.js';
+export * from './backend/index.js';
+export * from './model/index.js';

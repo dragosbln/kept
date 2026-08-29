@@ -26,6 +26,11 @@
     "test": "vitest run --passWithNoTests",
     "clean": "rm -rf dist *.tsbuildinfo"
   },
+  "dependencies": {
+    "@anthropic-ai/sdk": "catalog:",
+    "zod": "catalog:",
+    "openai": "catalog:"
+  },
   "devDependencies": {
     "@types/node": "catalog:",
     "typescript": "catalog:",
