@@ -1,4 +1,4 @@
-export type MessageRole = 'user' | 'assistant' | 'tool' | 'system';
+export type MessageRole = 'user' | 'assistant';
 export type ToolResultState = 'ok' | 'failed' | 'unknown';
 export type ToolArgs = Record<string, unknown>;
 
@@ -25,3 +25,17 @@ export type Message = {
   parts: MessagePart[];
   finishReason?: string;
 };
+
+/**
+ * Well-known error classes; the list grows as fault toggles land. `_OTHER`
+ * is OTel's conventional fallback for "an error outside the known classes".
+ */
+export type WellKnownErrorType = 'timeout' | '_OTHER';
+
+/**
+ * Low-cardinality error identifier, OTel `error.type` style: prefer a
+ * WellKnownErrorType, otherwise any stable identifier (an HTTP status code,
+ * an exception class name) — never free-form message text, so errors stay
+ * groupable in dashboards and eval assertions.
+ */
+export type ErrorType = WellKnownErrorType | (string & {});
