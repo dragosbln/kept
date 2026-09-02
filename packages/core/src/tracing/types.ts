@@ -57,7 +57,7 @@ export type EndToolExecutionPayload = Pick<ToolExecutionPayload, 'resultState' |
 
 export type StartToolExecutionPayload = Omit<ToolExecutionPayload, keyof EndToolExecutionPayload>;
 
-export type TurnFailureReason = 'internal' | 'max_turns' | 'refusal' | 'max_tokens';
+export type TurnFailureReason = 'internal' | 'max_turns' | 'refusal' | 'max_tokens' | 'unknown';
 
 export type TurnOutcome =
   | {
