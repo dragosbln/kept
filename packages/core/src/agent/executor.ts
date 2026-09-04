@@ -1,12 +1,12 @@
 import { z } from 'zod';
-import type { ToolRegistry, ToolResult } from '../tools/types.js';
+import type { ToolName, ToolRegistry, ToolResult } from '../tools/types.js';
 import type { ExecuteToolCallArgs, ExecuteToolParams, SettledToolCall } from './types.js';
 
-export const EXECUTOR_TIMEOUT_MS = 10_000;
+export const DEFAULT_TOOL_TIMEOUT_MS = 10_000;
 
 const TIMED_OUT = Symbol('timeout');
 
-type CreateTimeoutReturnType = {
+type ToolTimeout = {
   promise: Promise<typeof TIMED_OUT>;
   signal: AbortSignal;
   cancel: () => void;
@@ -17,26 +17,34 @@ type CreateTimeoutReturnType = {
  * `unknown`, and an abort signal so a tool that can stop in-flight work
  * does. cancel() disarms both once the tool has settled on its own.
  */
-function createTimeout(ms: number): CreateTimeoutReturnType {
+function createTimeout(ms: number): ToolTimeout {
   const controller = new AbortController();
-  let timeoutRef: NodeJS.Timeout | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const promise = new Promise<typeof TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve(TIMED_OUT);
+    }, ms);
+  });
   return {
-    promise: new Promise((resolve) => {
-      timeoutRef = setTimeout(() => {
-        controller.abort();
-        resolve(TIMED_OUT);
-      }, ms);
-    }),
+    promise,
     signal: controller.signal,
-    cancel: () => timeoutRef && clearTimeout(timeoutRef),
+    cancel: () => {
+      clearTimeout(timer);
+    },
   };
+}
+
+/** Prototype-safe membership test that also narrows `name` for the lookup. */
+function isRegisteredTool(registry: ToolRegistry, name: string): name is ToolName {
+  return Object.hasOwn(registry, name);
 }
 
 export async function executeTool<TSchema extends z.ZodType>({
   tool: { inputSchema, execute },
   input,
   callId,
-  timeoutMs = EXECUTOR_TIMEOUT_MS,
+  timeoutMs = DEFAULT_TOOL_TIMEOUT_MS,
 }: ExecuteToolParams<TSchema>): Promise<ToolResult> {
   const parsed = inputSchema.safeParse(input);
 
@@ -85,9 +93,9 @@ export async function executeTool<TSchema extends z.ZodType>({
 export async function executeToolCall(
   registry: ToolRegistry,
   { callId, name, args }: ExecuteToolCallArgs,
-  timeoutMs?: number,
+  timeoutMs = DEFAULT_TOOL_TIMEOUT_MS,
 ): Promise<SettledToolCall> {
-  if (!Object.keys(registry).includes(name)) {
+  if (!isRegisteredTool(registry, name)) {
     return {
       callId,
       resultState: 'failed',
@@ -96,17 +104,7 @@ export async function executeToolCall(
     };
   }
 
-  const tool = registry[name as keyof typeof registry];
+  const result = await executeTool({ tool: registry[name], input: args, callId, timeoutMs });
 
-  const result = await executeTool({
-    tool,
-    input: args,
-    callId,
-    timeoutMs,
-  });
-
-  return {
-    callId,
-    ...result,
-  };
+  return { callId, ...result };
 }

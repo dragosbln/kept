@@ -2,20 +2,22 @@ import type { z } from 'zod';
 import type { ToolDefinition, ToolRegistry, ToolResult } from '../tools/types.js';
 import type { ModelClient } from '../model/client.js';
 import type { Trace } from '../tracing/trace.js';
-import type { Message } from '../messages.js';
+import type { Message, ToolArgs } from '../messages.js';
 import type { TurnOutcome } from '../tracing/types.js';
 
+/** One tool definition plus the raw, not yet validated input the model gave it. */
 export type ExecuteToolParams<TSchema extends z.ZodType> = {
   tool: ToolDefinition<TSchema>;
   input: unknown;
   callId: string;
-  timeoutMs?: number | undefined;
+  timeoutMs?: number;
 };
 
+/** A tool call as the model requested it, addressed by name into a registry. */
 export type ExecuteToolCallArgs = {
   callId: string;
   name: string;
-  args: Record<string, unknown>;
+  args: ToolArgs;
 };
 
 /**

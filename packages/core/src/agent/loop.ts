@@ -35,12 +35,12 @@ import type { ModelCallSpan } from '../tracing/span.js';
 import type { Trace } from '../tracing/trace.js';
 import type { TurnFailureReason } from '../tracing/types.js';
 import type { ToolRegistry } from '../tools/types.js';
-import { EXECUTOR_TIMEOUT_MS, executeToolCall } from './executor.js';
+import { DEFAULT_TOOL_TIMEOUT_MS, executeToolCall } from './executor.js';
 import type { RunTurnParams, RunTurnResult, SettledToolCall, TurnLimits } from './types.js';
 
 export const DEFAULT_TURN_LIMITS: TurnLimits = {
   maxRounds: 10,
-  toolTimeoutMs: EXECUTOR_TIMEOUT_MS,
+  toolTimeoutMs: DEFAULT_TOOL_TIMEOUT_MS,
 };
 
 /**
@@ -68,6 +68,7 @@ type LoopContext = {
   limits: TurnLimits;
 };
 
+/** One customer message in, one outcome out. The module comment has the state machine. */
 export async function runTurn({
   history,
   message,
@@ -283,12 +284,17 @@ async function tracedToolCall(part: ToolCallPart, ctx: LoopContext): Promise<Set
   return settled;
 }
 
-/** The customer-visible text of an assistant message; empty when it has no text parts. */
+/**
+ * The customer-visible text of an assistant message; empty when it has no
+ * text parts. Providers emit several text blocks only around tool calls or
+ * server-side content, so the join is a newline: it keeps blocks readable
+ * and never glues two words together.
+ */
 function replyText(message: Message): string {
   return message.parts
     .filter((part) => part.type === 'text')
     .map((part) => part.content)
-    .join(' ');
+    .join('\n');
 }
 
 /**

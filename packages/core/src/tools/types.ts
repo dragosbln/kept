@@ -26,4 +26,12 @@ export type ToolDefinition<TSchema extends z.ZodType> = {
   execute: (input: z.infer<TSchema>, ctx: ToolExecuteContext) => Promise<ToolResult>;
 };
 
-export type ToolRegistry = { [key in ToolName]: ToolDefinition<any> };
+/**
+ * A registry entry with its schema type erased. `any` rather than `z.ZodType`
+ * on purpose: with the concrete schema gone, `execute` would have to accept
+ * `unknown`, and no real tool does. The executor restores the link at run
+ * time by parsing the input with the entry's own schema before calling it.
+ */
+export type AnyToolDefinition = ToolDefinition<any>;
+
+export type ToolRegistry = { [key in ToolName]: AnyToolDefinition };
