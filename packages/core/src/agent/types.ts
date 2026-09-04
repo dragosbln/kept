@@ -31,6 +31,13 @@ export type RunTurnParams = {
   modelClient: ModelClient;
   tools: ToolRegistry;
   trace: Trace;
+  /**
+   * Budget of tool rounds per turn. A round is "the model asked for tools,
+   * they ran, the model was called again", so the model is called at most
+   * `maxRounds + 1` times. A tool_use response past the budget is discarded
+   * without running its tools and the turn fails with `max_rounds`; that
+   * final model call is paid for and thrown away.
+   */
   maxRounds?: number;
 };
 
@@ -49,7 +56,7 @@ export type RecursiveRunTurnParams = {
   maxRounds?: number | undefined;
 };
 
-export type LoopResultType = Exclude<CallModelResponseType, 'tool_use'> | 'max_turns';
+export type LoopResultType = Exclude<CallModelResponseType, 'tool_use'> | 'max_rounds';
 
 export type RecursiveRunReturnType = {
   type: LoopResultType;
