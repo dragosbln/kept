@@ -164,4 +164,37 @@ describe('executeToolCall', () => {
 
     expect(settled).toMatchObject({ resultState: 'failed', result: { requestedTool: 'toString' } });
   });
+
+  it('aborts the signal on timeout so a cooperative tool can stop its work', async () => {
+    let signal: AbortSignal | undefined;
+    const registry = registryWith((_input, ctx) => {
+      signal = ctx.signal;
+      return new Promise(() => {});
+    });
+
+    const settled = await executeToolCall(
+      registry,
+      { callId: 'call-9', name: 'lookup_order', args: { orderId: 'order-7' } },
+      15,
+    );
+
+    expect(settled.resultState).toBe('unknown');
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it('leaves the signal untouched when the tool settles in time', async () => {
+    let signal: AbortSignal | undefined;
+    const registry = registryWith(async (_input, ctx) => {
+      signal = ctx.signal;
+      return { resultState: 'ok', result: null, response: 'done' };
+    });
+
+    await executeToolCall(registry, {
+      callId: 'call-10',
+      name: 'lookup_order',
+      args: { orderId: 'order-7' },
+    });
+
+    expect(signal?.aborted).toBe(false);
+  });
 });

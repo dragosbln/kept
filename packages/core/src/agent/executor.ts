@@ -8,15 +8,26 @@ const TIMED_OUT = Symbol('timeout');
 
 type CreateTimeoutReturnType = {
   promise: Promise<typeof TIMED_OUT>;
+  signal: AbortSignal;
   cancel: () => void;
 };
 
+/**
+ * One timer, two effects: the race sentinel that settles the call as
+ * `unknown`, and an abort signal so a tool that can stop in-flight work
+ * does. cancel() disarms both once the tool has settled on its own.
+ */
 function createTimeout(ms: number): CreateTimeoutReturnType {
+  const controller = new AbortController();
   let timeoutRef: NodeJS.Timeout | null = null;
   return {
     promise: new Promise((resolve) => {
-      timeoutRef = setTimeout(() => resolve(TIMED_OUT), ms);
+      timeoutRef = setTimeout(() => {
+        controller.abort();
+        resolve(TIMED_OUT);
+      }, ms);
     }),
+    signal: controller.signal,
     cancel: () => timeoutRef && clearTimeout(timeoutRef),
   };
 }
@@ -24,16 +35,26 @@ function createTimeout(ms: number): CreateTimeoutReturnType {
 export async function executeTool<TSchema extends z.ZodType>({
   tool: { inputSchema, execute },
   input,
-  ctx,
+  callId,
   timeoutMs = EXECUTOR_TIMEOUT_MS,
 }: ExecuteToolParams<TSchema>): Promise<ToolResult> {
+  const parsed = inputSchema.safeParse(input);
+
+  if (!parsed.success) {
+    return {
+      resultState: 'failed',
+      result: parsed.error.issues,
+      response: `Invalid input: ${z.prettifyError(parsed.error)}`,
+    };
+  }
+
   const timeout = createTimeout(timeoutMs);
 
   try {
-    const parsedInput = inputSchema.parse(input);
+    const executePromise = execute(parsed.data, { callId, signal: timeout.signal });
 
-    const executePromise = execute(parsedInput, ctx);
-
+    // A rejection that lands after the race has settled (a tool failing late,
+    // after its timeout) must not surface as an unhandled rejection.
     executePromise.catch(() => {});
 
     const result = await Promise.race([executePromise, timeout.promise]);
@@ -48,14 +69,6 @@ export async function executeTool<TSchema extends z.ZodType>({
 
     return result;
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return {
-        resultState: 'failed',
-        result: error.issues,
-        response: `Invalid input: ${z.prettifyError(error)}`,
-      };
-    }
-
     return {
       resultState: 'failed',
       result:
@@ -88,7 +101,7 @@ export async function executeToolCall(
   const result = await executeTool({
     tool,
     input: args,
-    ctx: { callId },
+    callId,
     timeoutMs,
   });
 

@@ -9,17 +9,19 @@
 // rounds exercise registry → executor → backend end to end.
 
 import { describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { runTurn } from './loop.js';
 import { Trace } from '../tracing/trace.js';
 import type { CompletedTrace, TraceConfig } from '../tracing/types.js';
 import { createToolRegistry } from '../tools/registry.js';
+import { defineTool } from '../tools/utils.js';
+import type { ToolRegistry } from '../tools/types.js';
 import { DemoBackend } from '../backend/demo.js';
 import { makeDemoOrders } from '../backend/seed-orders.js';
 import type { ModelClient } from '../model/client.js';
 import type { CallModelResponse, ModelClientConfig } from '../model/types.js';
 import type { Message, ToolArgs } from '../messages.js';
-import type { Conversation } from '../conversation/types.js';
-import type { RunTurnResult } from './types.js';
+import type { RunTurnParams, RunTurnResult } from './types.js';
 
 // --- Fixtures ---------------------------------------------------------------
 
@@ -89,21 +91,19 @@ function toolUse(calls: { id: string; name: string; args: ToolArgs }[]): CallMod
 
 const registry = createToolRegistry(new DemoBackend(makeDemoOrders()));
 
-function emptyConversation(): Conversation {
-  return { id: 'conv-1', messages: [] };
-}
-
 type RunReturnType = {
   trace: Trace;
   modelClient: FakeModelClient;
   promise: Promise<RunTurnResult>;
 };
 
-function run(script: CallModelResponse[], overrides: { maxRounds?: number } = {}): RunReturnType {
+type RunOverrides = Partial<Pick<RunTurnParams, 'limits' | 'tools' | 'logger'>>;
+
+function run(script: CallModelResponse[], overrides: RunOverrides = {}): RunReturnType {
   const trace = new Trace(traceConfig);
   const modelClient = new FakeModelClient(script);
   const promise = runTurn({
-    conversation: emptyConversation(),
+    history: [],
     message: 'Where is my order?',
     modelClient,
     tools: registry,
@@ -295,7 +295,7 @@ describe('runTurn', () => {
         toolUse([{ id: 'call-1', name: 'lookup_order', args: { orderId: 'order-1001' } }]),
         toolUse([{ id: 'call-2', name: 'lookup_order', args: { orderId: 'order-1002' } }]),
       ],
-      { maxRounds: 1 },
+      { limits: { maxRounds: 1 } },
     );
     const result = await promise;
 
@@ -411,7 +411,7 @@ describe('runTurn', () => {
     const trace = new Trace(traceConfig);
     const modelClient = new FakeModelClient([endTurn('It shipped.')]);
     const result = await runTurn({
-      conversation: { id: 'conv-1', messages: prior },
+      history: prior,
       message: 'Where is my order?',
       modelClient,
       tools: registry,
@@ -423,38 +423,70 @@ describe('runTurn', () => {
     expect(result.updatedHistory.slice(0, 2)).toEqual(prior);
   });
 
-  it('contains a contract-violating client: failed(internal), turn span still closed', async () => {
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      const throwingClient: ModelClient = {
-        callModel: async () => {
-          throw new Error('client broke its never-rejects contract');
-        },
-        getConfig: () => fakeConfig,
-      };
-      const trace = new Trace(traceConfig);
-      const result = await runTurn({
-        conversation: emptyConversation(),
-        message: 'Where is my order?',
-        modelClient: throwingClient,
-        tools: registry,
-        trace,
-      });
+  it('contains a contract-violating client: failed(internal), span stamped, logger told', async () => {
+    const throwingClient: ModelClient = {
+      callModel: async () => {
+        throw new Error('client broke its never-rejects contract');
+      },
+      getConfig: () => fakeConfig,
+    };
+    const logger = { error: vi.fn() };
+    const trace = new Trace(traceConfig);
+    const result = await runTurn({
+      history: [],
+      message: 'Where is my order?',
+      modelClient: throwingClient,
+      tools: registry,
+      trace,
+      logger,
+    });
 
-      expect(result.outcome).toEqual({ type: 'failed', reason: 'internal' });
-      expect(result.updatedHistory).toEqual([]);
+    expect(result.outcome).toEqual({ type: 'failed', reason: 'internal' });
+    expect(result.updatedHistory).toEqual([]);
+    expect(logger.error).toHaveBeenCalledOnce();
 
-      // In dev mode an unfinished turn span makes trace.end() throw — so this
-      // both must not throw AND must show the turn span completed.
-      const completed = trace.end();
-      const turn = completed.spans.find((span) => span.kind === 'turn');
-      expect(turn).toMatchObject({
-        status: 'completed',
-        outcome: { type: 'failed', reason: 'internal' },
-      });
-      expect(consoleSpy).toHaveBeenCalled();
-    } finally {
-      consoleSpy.mockRestore();
-    }
+    // In dev mode an unfinished span makes trace.end() throw, so this both
+    // must not throw AND must show every span settled.
+    const completed = trace.end();
+    expectAllSpansSettled(completed);
+    expect(completed.spans.find((span) => span.kind === 'turn')).toMatchObject({
+      status: 'completed',
+      outcome: { type: 'failed', reason: 'internal' },
+    });
+    // The exception's class is the span's error type: groupable, never free text.
+    expect(completed.spans.find((span) => span.kind === 'model_call')).toMatchObject({
+      status: 'error',
+      errorType: 'Error',
+    });
+  });
+
+  it('tool timeout: the call settles as unknown, the model is told not to retry, the turn goes on', async () => {
+    const hanging: ToolRegistry = {
+      lookup_order: defineTool({
+        description: 'never settles',
+        inputSchema: z.object({ orderId: z.string() }),
+        execute: () => new Promise(() => {}),
+      }),
+    };
+    const { trace, promise } = run(
+      [
+        toolUse([{ id: 'call-1', name: 'lookup_order', args: { orderId: 'order-1001' } }]),
+        endTurn('I could not confirm that just now.'),
+      ],
+      { tools: hanging, limits: { toolTimeoutMs: 15 } },
+    );
+    const result = await promise;
+
+    expect(result.outcome.type).toBe('reply');
+    const toolResultPart = result.updatedHistory[2]!.parts[0] as {
+      status: string;
+      response: string;
+    };
+    expect(toolResultPart.status).toBe('unknown');
+    expect(toolResultPart.response).toContain('Do not retry');
+
+    const toolSpan = trace.end().spans.find((span) => span.kind === 'tool_execution');
+    // Two facts on two levels: the span completed, the tool's result is unknown.
+    expect(toolSpan).toMatchObject({ status: 'completed', resultState: 'unknown' });
   });
 });
