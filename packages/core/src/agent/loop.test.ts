@@ -221,6 +221,55 @@ describe('runTurn', () => {
     expectAllSpansSettled(completed);
   });
 
+  it('text alongside tool calls: the text rides along in history, only the calls run', async () => {
+    const { trace, promise } = run([
+      {
+        type: 'tool_use',
+        message: {
+          role: 'assistant',
+          parts: [
+            { type: 'text', content: 'Let me look that up.' },
+            {
+              type: 'tool_call',
+              id: 'call-1',
+              name: 'lookup_order',
+              args: { orderId: 'order-1001' },
+            },
+          ],
+        },
+        usage,
+      },
+      endTurn('Your order shipped.'),
+    ]);
+    const result = await promise;
+
+    expect(result.outcome.type).toBe('reply');
+    const [, assistantMsg, toolResultMsg] = result.updatedHistory;
+    expect(assistantMsg!.parts.map((part) => part.type)).toEqual(['text', 'tool_call']);
+    expect(toolResultMsg!.parts).toHaveLength(1);
+
+    const completed = trace.end();
+    expect(completed.spans.filter((span) => span.kind === 'tool_execution')).toHaveLength(1);
+  });
+
+  it('tool_use without tool calls breaks the client contract: failed(internal), no tool spans', async () => {
+    const { trace, modelClient, promise } = run([
+      { type: 'tool_use', message: { role: 'assistant', parts: [] }, usage },
+      endTurn('unreachable'),
+    ]);
+    const result = await promise;
+
+    expect(result.outcome).toEqual({ type: 'failed', reason: 'internal' });
+    expect(result.updatedHistory).toEqual([]);
+    expect(modelClient.calls).toHaveLength(1); // no second round on a malformed response
+
+    const completed = trace.end();
+    expectAllSpansSettled(completed);
+    expect(spanKinds(completed)).toEqual(['turn', 'model_call']);
+    // The call itself succeeded; the failure is the loop's verdict, not the span's.
+    expect(completed.spans[1]).toMatchObject({ kind: 'model_call', status: 'completed' });
+  });
+
   it('a model-invented tool name settles as failed and the turn continues', async () => {
     const { trace, promise } = run([
       toolUse([{ id: 'call-1', name: 'issue_refund', args: { amount: 9999 } }]),
