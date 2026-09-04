@@ -20,6 +20,9 @@ export type MessagePart =
       status: ToolResultState;
     };
 
+/** The tool-call member of MessagePart, for code that handles tool calls alone. */
+export type ToolCallPart = Extract<MessagePart, { type: 'tool_call' }>;
+
 export type Message = {
   role: MessageRole;
   parts: MessagePart[];

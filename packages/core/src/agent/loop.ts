@@ -6,6 +6,7 @@
 //   (start)           runTurn(message)               awaiting_model
 //   awaiting_model    tool_use, rounds left          executing_tools
 //   awaiting_model    tool_use, budget spent         failed(max_rounds)
+//   awaiting_model    tool_use, no tool calls        failed(internal)
 //   awaiting_model    end_turn with text             replied
 //   awaiting_model    end_turn without text          failed(empty_reply)
 //   awaiting_model    refusal | max_tokens           failed(refusal | max_tokens)
@@ -26,7 +27,7 @@
 //   each step, so no two events overlap inside a turn.
 // - The loop never speaks HTTP and never ends the trace; the host does both.
 
-import type { Message, MessagePart } from '../messages.js';
+import type { Message, MessagePart, ToolCallPart } from '../messages.js';
 import type { ModelClient } from '../model/client.js';
 import type { CallModelResponse, ModelClientConfig } from '../model/types.js';
 import type { ModelCallSpan, TurnSpan } from '../tracing/span.js';
@@ -34,7 +35,7 @@ import type { Trace } from '../tracing/trace.js';
 import type { TurnFailureReason } from '../tracing/types.js';
 import type { ToolRegistry } from '../tools/types.js';
 import { executeToolCall } from './executor.js';
-import type { RunTurnParams, RunTurnResult } from './types.js';
+import type { RunTurnParams, RunTurnResult, SettledToolCall } from './types.js';
 
 const MAX_ROUNDS = 10;
 
@@ -136,10 +137,15 @@ async function runLoop(history: Message[], ctx: LoopContext): Promise<Terminal> 
 
     switch (response.type) {
       case 'tool_use': {
+        const toolCalls = response.message.parts.filter((part) => part.type === 'tool_call');
+        if (toolCalls.length === 0) {
+          // The client's contract: a tool_use response carries at least one tool call.
+          return { state: 'failed', reason: 'internal' };
+        }
         if (round >= ctx.maxRounds) {
           return { state: 'failed', reason: 'max_rounds' };
         }
-        const toolResults = await executeToolRound(response.message, ctx);
+        const toolResults = await executeToolRound(toolCalls, ctx);
         messages = [...messages, response.message, toolResults];
         continue;
       }
@@ -241,52 +247,47 @@ function closeModelCallSpan(span: ModelCallSpan, response: CallModelResponse): v
 }
 
 /**
- * executing_tools: every tool_call in the assistant message runs in parallel
- * under its own tool_execution span, parented by the turn. All results come
- * back in ONE user message, so each tool_use is answered by exactly one
- * tool_result.
+ * executing_tools: every tool call of the round runs in parallel under its
+ * own tool_execution span, parented by the turn. All results come back in
+ * ONE user message, so each tool_use is answered by exactly one tool_result.
  */
-async function executeToolRound(assistantMessage: Message, ctx: LoopContext): Promise<Message> {
-  const toolPromises = assistantMessage.parts.flatMap((part) => {
-    if (part.type === 'tool_call') {
-      const toolSpan = ctx.trace.startToolExecutionSpan(ctx.turnSpanId, {
-        toolName: part.name,
-        callId: part.id,
-        args: part.args,
-      });
-      return [
-        executeToolCall(ctx.tools, {
-          callId: part.id,
-          name: part.name,
-          args: part.args,
-        })
-          .then((value) => {
-            toolSpan.end({ result: value.result, resultState: value.resultState });
-            return value;
-          })
-          .catch((error) => {
-            toolSpan.error('_OTHER');
-            throw error;
-          }),
-      ];
-    }
-    return [];
-  });
-
-  const results = await Promise.all(toolPromises);
+async function executeToolRound(toolCalls: ToolCallPart[], ctx: LoopContext): Promise<Message> {
+  const settled = await Promise.all(toolCalls.map((part) => tracedToolCall(part, ctx)));
 
   return {
     role: 'user',
-    parts: results.map(
-      (res) =>
-        ({
-          type: 'tool_call_response',
-          id: res.callId,
-          response: res.response,
-          status: res.resultState,
-        }) as MessagePart,
-    ),
+    parts: settled.map((call): MessagePart => ({
+      type: 'tool_call_response',
+      id: call.callId,
+      response: call.response,
+      status: call.resultState,
+    })),
   };
+}
+
+/**
+ * One tool call, recorded as a tool_execution span. The executor settles
+ * every call to a result: validation failure, throw, timeout and unknown
+ * tool are results, never rejections, and its tests pin that. So the span
+ * always ends with a resultState, and the loop trusts the contract instead
+ * of guarding it a second time; a rejection here would be a bug in this
+ * package, and the trace sweep would surface the span it left open.
+ */
+async function tracedToolCall(part: ToolCallPart, ctx: LoopContext): Promise<SettledToolCall> {
+  const span = ctx.trace.startToolExecutionSpan(ctx.turnSpanId, {
+    toolName: part.name,
+    callId: part.id,
+    args: part.args,
+  });
+
+  const settled = await executeToolCall(ctx.tools, {
+    callId: part.id,
+    name: part.name,
+    args: part.args,
+  });
+
+  span.end({ result: settled.result, resultState: settled.resultState });
+  return settled;
 }
 
 /** The customer-visible text of an assistant message; empty when it has no text parts. */

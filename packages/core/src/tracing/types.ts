@@ -62,7 +62,8 @@ export type StartToolExecutionPayload = Omit<ToolExecutionPayload, keyof EndTool
  * model's stop reasons; `unknown_stop_reason` is a stop reason outside the
  * known set; `empty_reply` is an end_turn with no text to show the customer;
  * `max_rounds` is the turn's tool-round budget running out; `internal` is
- * anything that crossed a contract boundary as an exception or transport error.
+ * anything that crossed a contract boundary: an exception, a transport error,
+ * or a response the model client should never produce.
  */
 export type TurnFailureReason =
   'internal' | 'max_rounds' | 'refusal' | 'max_tokens' | 'unknown_stop_reason' | 'empty_reply';
