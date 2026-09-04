@@ -3,9 +3,6 @@ export type {
   ExecuteToolParams,
   RunTurnParams,
   RunTurnResult,
-  RecursiveRunReturnType,
-  RecursiveRunTurnParams,
-  LoopResultType,
   SettledToolCall,
 } from './types.js';
 export { executeToolCall } from './executor.js';
