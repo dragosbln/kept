@@ -4,6 +4,8 @@ export type {
   RunTurnParams,
   RunTurnResult,
   SettledToolCall,
+  TurnLimits,
+  TurnLogger,
 } from './types.js';
 export { executeToolCall } from './executor.js';
-export { runTurn } from './loop.js';
+export { DEFAULT_TURN_LIMITS, runTurn } from './loop.js';

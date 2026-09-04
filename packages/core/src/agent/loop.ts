@@ -22,7 +22,8 @@
 //   and the trace records what history omits. Only `replied` commits the turn.
 // - No span is left in_progress at a terminal; the turn span closes with the
 //   outcome.
-// - Errors become outcomes; nothing throws across the runTurn boundary.
+// - Errors become outcomes; nothing throws across the runTurn boundary. The
+//   host hears about swallowed internal errors through the logger it injects.
 // - Single-flight: the caller holds the conversation lock and the loop awaits
 //   each step, so no two events overlap inside a turn.
 // - The loop never speaks HTTP and never ends the trace; the host does both.
@@ -30,14 +31,17 @@
 import type { Message, MessagePart, ToolCallPart } from '../messages.js';
 import type { ModelClient } from '../model/client.js';
 import type { CallModelResponse, ModelClientConfig } from '../model/types.js';
-import type { ModelCallSpan, TurnSpan } from '../tracing/span.js';
+import type { ModelCallSpan } from '../tracing/span.js';
 import type { Trace } from '../tracing/trace.js';
 import type { TurnFailureReason } from '../tracing/types.js';
 import type { ToolRegistry } from '../tools/types.js';
-import { executeToolCall } from './executor.js';
-import type { RunTurnParams, RunTurnResult, SettledToolCall } from './types.js';
+import { EXECUTOR_TIMEOUT_MS, executeToolCall } from './executor.js';
+import type { RunTurnParams, RunTurnResult, SettledToolCall, TurnLimits } from './types.js';
 
-const MAX_ROUNDS = 10;
+export const DEFAULT_TURN_LIMITS: TurnLimits = {
+  maxRounds: 10,
+  toolTimeoutMs: EXECUTOR_TIMEOUT_MS,
+};
 
 /**
  * Where a turn can end. The loop returns one of these and nothing else; the
@@ -61,71 +65,60 @@ type LoopContext = {
   tools: ToolRegistry;
   trace: Trace;
   turnSpanId: string;
-  maxRounds: number;
+  limits: TurnLimits;
 };
 
 export async function runTurn({
-  conversation,
+  history,
   message,
   modelClient,
   tools,
   trace,
-  maxRounds = MAX_ROUNDS,
+  limits = {},
+  logger = console,
 }: RunTurnParams): Promise<RunTurnResult> {
-  let turnSpan: TurnSpan | undefined;
+  const messages: Message[] = [
+    ...history,
+    { role: 'user', parts: [{ type: 'text', content: message }] },
+  ];
 
+  // Opened outside the try on purpose: the only way this throws is the
+  // trace's dev-mode misuse guard, and that one is meant to be heard.
+  const turnSpan = trace.startTurnSpan(null, { customerInput: message });
+
+  let terminal: Terminal;
   try {
-    const history: Message[] = [
-      ...conversation.messages,
-      { role: 'user', parts: [{ type: 'text', content: message }] },
-    ];
-
-    turnSpan = trace.startTurnSpan(null, { customerInput: message });
-
-    const terminal = await runLoop(history, {
+    terminal = await runLoop(messages, {
       modelClient,
       modelConfig: modelClient.getConfig(),
       tools,
       trace,
       turnSpanId: turnSpan.id,
-      maxRounds,
+      limits: { ...DEFAULT_TURN_LIMITS, ...limits },
     });
-
-    const result = toTurnResult(terminal, conversation.messages);
-    turnSpan.end({ outcome: result.outcome });
-    return result;
   } catch (error) {
-    console.error(error);
-
-    if (turnSpan) {
-      turnSpan.end({
-        outcome: {
-          type: 'failed',
-          reason: 'internal',
-        },
-      });
-    }
-
-    return {
-      outcome: {
-        type: 'failed',
-        reason: 'internal',
-      },
-      updatedHistory: conversation.messages,
-    };
+    // Nothing throws across this boundary. A throw here is a contract
+    // violation somewhere below, already recorded on the span it came from;
+    // it becomes an outcome, and the host gets the error through the logger.
+    logger.error('runTurn: turn failed on an internal error', error);
+    terminal = { state: 'failed', reason: 'internal' };
   }
+
+  const result = toTurnResult(terminal, history);
+  turnSpan.end({ outcome: result.outcome });
+  return result;
 }
 
 /**
  * The transition table, one round per iteration: awaiting_model, then either
  * a terminal or executing_tools and back. `round` counts completed tool
- * rounds; see RunTurnParams.maxRounds for how the budget is spent.
+ * rounds; see TurnLimits.maxRounds for how the budget is spent.
  */
-async function runLoop(history: Message[], ctx: LoopContext): Promise<Terminal> {
+async function runLoop(initial: Message[], ctx: LoopContext): Promise<Terminal> {
   // Rebuilt every round, never pushed: each round's model_call span holds a
   // reference to that round's `messages` as its inputMessages and must not
   // see later rounds appended to it.
-  let messages = history;
+  let messages = initial;
 
   // Rounds are sequential by design: each model call needs the previous
   // round's tool results, and single-flight holds because every step is
@@ -142,7 +135,7 @@ async function runLoop(history: Message[], ctx: LoopContext): Promise<Terminal> 
           // The client's contract: a tool_use response carries at least one tool call.
           return { state: 'failed', reason: 'internal' };
         }
-        if (round >= ctx.maxRounds) {
+        if (round >= ctx.limits.maxRounds) {
           return { state: 'failed', reason: 'max_rounds' };
         }
         const toolResults = await executeToolRound(toolCalls, ctx);
@@ -214,8 +207,8 @@ async function tracedModelCall(messages: Message[], ctx: LoopContext): Promise<C
     return response;
   } catch (error) {
     // The client's contract is "never rejects"; a throw here is a bug. The
-    // span records it before runTurn turns it into failed(internal).
-    span.error('_OTHER');
+    // span records its class before runTurn turns it into failed(internal).
+    span.error(error instanceof Error ? error.name : '_OTHER');
     throw error;
   }
 }
@@ -280,11 +273,11 @@ async function tracedToolCall(part: ToolCallPart, ctx: LoopContext): Promise<Set
     args: part.args,
   });
 
-  const settled = await executeToolCall(ctx.tools, {
-    callId: part.id,
-    name: part.name,
-    args: part.args,
-  });
+  const settled = await executeToolCall(
+    ctx.tools,
+    { callId: part.id, name: part.name, args: part.args },
+    ctx.limits.toolTimeoutMs,
+  );
 
   span.end({ result: settled.result, resultState: settled.resultState });
   return settled;

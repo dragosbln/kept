@@ -187,7 +187,7 @@ export async function createAgentService(config: AgentServiceConfig): Promise<Ag
 
       try {
         const { outcome, updatedHistory } = await runTurn({
-          conversation,
+          history: conversation.messages,
           message,
           modelClient,
           tools: registry,

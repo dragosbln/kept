@@ -30,7 +30,7 @@ function fakeBackend(stock: Order[]): FakeBackendReturnType {
   return { backend, requestedIds };
 }
 
-const ctx: ToolExecuteContext = { callId: 'call_1' };
+const ctx: ToolExecuteContext = { callId: 'call_1', signal: new AbortController().signal };
 
 describe('lookup_order', () => {
   it('returns ok with the sanitized order when the backend finds it', async () => {
