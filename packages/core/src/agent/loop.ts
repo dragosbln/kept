@@ -46,7 +46,7 @@ async function recursiveRun({
           outputMessages: [response.message],
         });
       } else {
-        callSpan.error('_OTHER');
+        callSpan.error('context_window_exceeded');
       }
     } else {
       callSpan.end({
@@ -64,7 +64,7 @@ async function recursiveRun({
     } else if (response.type === 'tool_use') {
       if (round >= maxRounds) {
         return {
-          type: 'max_turns',
+          type: 'max_rounds',
           messages: messagesCopy,
         };
       }
@@ -142,7 +142,7 @@ function createTurnOutcome(response: RecursiveRunReturnType): TurnOutcome {
       if (!message) {
         return {
           type: 'failed',
-          reason: 'unknown',
+          reason: 'empty_reply',
         };
       } else {
         return {
@@ -161,12 +161,16 @@ function createTurnOutcome(response: RecursiveRunReturnType): TurnOutcome {
         reason: 'internal',
       };
     case 'max_tokens':
-    case 'max_turns':
+    case 'max_rounds':
     case 'refusal':
-    case 'unknown':
       return {
         type: 'failed',
         reason: response.type,
+      };
+    case 'unknown':
+      return {
+        type: 'failed',
+        reason: 'unknown_stop_reason',
       };
   }
 }

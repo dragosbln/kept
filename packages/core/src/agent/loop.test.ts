@@ -240,7 +240,7 @@ describe('runTurn', () => {
     expect(toolSpan).toMatchObject({ resultState: 'failed', toolName: 'issue_refund' });
   });
 
-  it('max_turns: stops at the round budget without executing the doomed round', async () => {
+  it('max_rounds: stops at the round budget without executing the doomed round', async () => {
     const { trace, promise } = run(
       [
         toolUse([{ id: 'call-1', name: 'lookup_order', args: { orderId: 'order-1001' } }]),
@@ -250,7 +250,7 @@ describe('runTurn', () => {
     );
     const result = await promise;
 
-    expect(result.outcome).toEqual({ type: 'failed', reason: 'max_turns' });
+    expect(result.outcome).toEqual({ type: 'failed', reason: 'max_rounds' });
     expect(result.updatedHistory).toEqual([]); // atomic: nothing persists
 
     const completed = trace.end();
@@ -308,7 +308,7 @@ describe('runTurn', () => {
     expect(result.updatedHistory).toEqual([]);
   });
 
-  it('unknown stop reason: failed(unknown), pre-turn history', async () => {
+  it('unknown stop reason: failed(unknown_stop_reason), pre-turn history', async () => {
     const { promise } = run([
       {
         type: 'unknown',
@@ -318,7 +318,7 @@ describe('runTurn', () => {
       },
     ]);
     const result = await promise;
-    expect(result.outcome).toEqual({ type: 'failed', reason: 'unknown' });
+    expect(result.outcome).toEqual({ type: 'failed', reason: 'unknown_stop_reason' });
     expect(result.updatedHistory).toEqual([]);
   });
 
@@ -330,7 +330,7 @@ describe('runTurn', () => {
     expect(result.updatedHistory).toEqual([]);
 
     const call = trace.end().spans.find((span) => span.kind === 'model_call');
-    expect(call).toMatchObject({ status: 'error', errorType: '_OTHER' });
+    expect(call).toMatchObject({ status: 'error', errorType: 'context_window_exceeded' });
   });
 
   it('conversation_full (generation flavor): the truncated partial is recorded in the trace', async () => {
@@ -345,12 +345,12 @@ describe('runTurn', () => {
     expect(call).toMatchObject({ status: 'completed', outputMessages: [partial] });
   });
 
-  it('an end_turn with no text becomes failed(unknown), never an empty reply', async () => {
+  it('an end_turn with no text becomes failed(empty_reply), never an empty reply', async () => {
     const { promise } = run([
       { type: 'end_turn', message: { role: 'assistant', parts: [] }, usage },
     ]);
     const result = await promise;
-    expect(result.outcome).toEqual({ type: 'failed', reason: 'unknown' });
+    expect(result.outcome).toEqual({ type: 'failed', reason: 'empty_reply' });
     expect(result.updatedHistory).toEqual([]);
   });
 

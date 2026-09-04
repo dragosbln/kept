@@ -27,10 +27,12 @@ export type Message = {
 };
 
 /**
- * Well-known error classes; the list grows as fault toggles land. `_OTHER`
- * is OTel's conventional fallback for "an error outside the known classes".
+ * Well-known error classes; the list grows as fault toggles land.
+ * `context_window_exceeded` is a model call rejected before generation
+ * because the request itself no longer fits the window. `_OTHER` is OTel's
+ * conventional fallback for "an error outside the known classes".
  */
-export type WellKnownErrorType = 'timeout' | '_OTHER';
+export type WellKnownErrorType = 'timeout' | 'context_window_exceeded' | '_OTHER';
 
 /**
  * Low-cardinality error identifier, OTel `error.type` style: prefer a

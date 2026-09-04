@@ -57,7 +57,15 @@ export type EndToolExecutionPayload = Pick<ToolExecutionPayload, 'resultState' |
 
 export type StartToolExecutionPayload = Omit<ToolExecutionPayload, keyof EndToolExecutionPayload>;
 
-export type TurnFailureReason = 'internal' | 'max_turns' | 'refusal' | 'max_tokens' | 'unknown';
+/**
+ * Why a turn ended without a reply. `refusal` and `max_tokens` mirror the
+ * model's stop reasons; `unknown_stop_reason` is a stop reason outside the
+ * known set; `empty_reply` is an end_turn with no text to show the customer;
+ * `max_rounds` is the turn's tool-round budget running out; `internal` is
+ * anything that crossed a contract boundary as an exception or transport error.
+ */
+export type TurnFailureReason =
+  'internal' | 'max_rounds' | 'refusal' | 'max_tokens' | 'unknown_stop_reason' | 'empty_reply';
 
 export type TurnOutcome =
   | {
