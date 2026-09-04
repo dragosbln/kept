@@ -31,6 +31,8 @@ export type {
   ToolExecutionSpanPayload,
   TraceConfig,
   TracePayload,
+  TurnFailureReason,
+  TurnOutcome,
   TurnPayload,
   TurnSpanPayload,
 } from './types.js';
