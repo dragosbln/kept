@@ -4,6 +4,7 @@
 
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import { configFromEnv, createAgentService } from './handler.js';
 
 const PORT = Number(process.env['PORT'] ?? 3100);
@@ -11,6 +12,22 @@ const PORT = Number(process.env['PORT'] ?? 3100);
 const service = await createAgentService(configFromEnv(process.env));
 
 const app = new Hono();
+
+// The widget POSTs from the storefront's origin. Comma-separated allowlist;
+// `*` (the default) is right for local development and for a widget that
+// any merchant page may embed — tighten it per deployment.
+const allowedOrigins = (process.env['KEPT_ALLOWED_ORIGINS'] ?? '*')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter((origin) => origin.length > 0);
+app.use(
+  '/chat',
+  cors({
+    origin: allowedOrigins.includes('*') ? '*' : allowedOrigins,
+    allowMethods: ['POST', 'OPTIONS'],
+    allowHeaders: ['content-type'],
+  }),
+);
 
 app.get('/health', (c) => c.json({ status: 'ok', service: 'agent' }));
 
