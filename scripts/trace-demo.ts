@@ -29,8 +29,6 @@ const modelConfig = {
   ...promptStamp,
   providerName: 'anthropic',
   model: 'claude-sonnet-5',
-  topK: 40,
-  temperature: 0.2,
 };
 
 const systemMessage: Message = {

@@ -42,6 +42,18 @@ export class Trace {
     }
   }
 
+  /**
+   * Misuse guard: when a trace is finalized, all spans have to be ended; no "in_progress" spans allowed
+   * Throw in dev, stay silent in prod
+   */
+  private guardSpanNotFinalized(span: AnySpan): void {
+    if (span.status === 'in_progress' && isDevMode()) {
+      throw new Error(
+        `span ${span.id}: cannot finalize trace with an unfinished span (in_progress)`,
+      );
+    }
+  }
+
   startModelCallSpan(parentSpanId: string | null, payload: StartModelCallPayload): ModelCallSpan {
     this.guardNotEnded();
     const span = new ModelCallSpan(this.payload.id, parentSpanId, payload);
@@ -69,6 +81,7 @@ export class Trace {
   /** Idempotent: the first call freezes the trace; later calls return it. */
   end(): CompletedTrace {
     if (this.completedTrace) return this.completedTrace;
+    this.spans.forEach((span) => this.guardSpanNotFinalized(span));
     const completed: CompletedTrace = {
       ...this.payload,
       duration: performance.now() - this.startMark,
