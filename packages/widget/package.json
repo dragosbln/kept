@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Embeddable chat widget.",
+  "description": "Embeddable post-purchase support chat widget for the Kept agent service.",
   "license": "MIT",
   "exports": {
     ".": "./src/index.ts"
@@ -21,12 +21,15 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
+    "demo": "pnpm run build && node build.mjs --serve",
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "devDependencies": {
+    "esbuild": "catalog:",
+    "happy-dom": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

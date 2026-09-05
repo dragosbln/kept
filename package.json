@@ -21,6 +21,7 @@
     "check:boundaries": "node scripts/check-eval-boundary.mjs",
     "check": "pnpm check:boundaries && pnpm lint && pnpm format:check && pnpm typecheck && pnpm test",
     "demo:trace": "tsx --env-file-if-exists=.env scripts/trace-demo.ts",
+    "demo:widget": "pnpm --filter @kept-hq/widget demo",
     "prepare": "git rev-parse --git-dir >/dev/null 2>&1 && git config core.hooksPath .githooks || true",
     "dev": "pnpm --filter @kept-hq/agent dev",
     "stack:up": "docker compose up -d",
