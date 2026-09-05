@@ -32,3 +32,8 @@ catalog:
   zod: ^4.1.0
   '@anthropic-ai/sdk': ^0.120.0
   openai: ^7.8.0
+  # Widget toolchain, dev-only: esbuild bundles the script-tag embed into
+  # a single IIFE file; happy-dom is the DOM behind the widget's vitest
+  # suite.
+  esbuild: ^0.28.0
+  'happy-dom': ^20.0.0
