@@ -3,15 +3,8 @@
 // every span dual-emits the portable gen_ai.* attributes and the langfuse.*
 // attributes that drive rendering (input/output panes, session grouping).
 
-import type {
-  CompletedSpanPayload,
-  CompletedTrace,
-  Message,
-  MessageRole,
-  SpanKind,
-  ToolArgs,
-  TurnSpanPayload,
-} from '../types.js';
+import type { Message, MessageRole, ToolArgs } from '../../messages.js';
+import type { CompletedSpanPayload, CompletedTrace, SpanKind, TurnSpanPayload } from '../types.js';
 import { langfuseAttributes, otelAttributes } from './otel-attributes.js';
 
 const SERVICE_NAME = 'kept-agent';
@@ -51,11 +44,6 @@ const int = (key: string, value: number | undefined): OtlpAttribute => ({
   key,
   value: { intValue: value },
 });
-const double = (key: string, value: number | undefined): OtlpAttribute => ({
-  key,
-  value: { doubleValue: value },
-});
-
 function dropUndefinedAttributes(attributes: OtlpAttribute[]): OtlpAttribute[] {
   return attributes.filter(
     ({ value }) =>
@@ -152,9 +140,21 @@ function toOtlpMessages(messages: Message[]): OtlpMessage[] {
 }
 
 function getTurnOutputMessage(span: TurnSpanPayload): string | undefined {
-  if (span.outcome?.type === 'reply') {
-    return span.outcome.message;
+  if (!span.outcome) {
+    return undefined;
   }
+  if (span.outcome.type === 'reply') {
+    return span.outcome.message;
+  } else {
+    return '';
+  }
+}
+
+function getTurnOutputReason(span: TurnSpanPayload): string | undefined {
+  if (span.outcome?.type === 'failed') {
+    return span.outcome.reason;
+  }
+
   return undefined;
 }
 
@@ -180,6 +180,7 @@ function mapSpanAttributes(trace: CompletedTrace, span: CompletedSpanPayload): O
         str(langfuseAttributes.input, span.customerInput),
         str(langfuseAttributes.output, getTurnOutputMessage(span)),
         str(langfuseAttributes.outcomeType, span.outcome?.type),
+        str(langfuseAttributes.outcomeReason, getTurnOutputReason(span)),
       ];
     case 'model_call': {
       const inputMessages = JSON.stringify(toOtlpMessages(span.inputMessages));
@@ -190,8 +191,6 @@ function mapSpanAttributes(trace: CompletedTrace, span: CompletedSpanPayload): O
         ...attributes,
         str(otelAttributes.model, span.model),
         str(otelAttributes.providerName, span.providerName),
-        double(otelAttributes.temperature, span.temperature),
-        int(otelAttributes.topK, span.topK),
         int(otelAttributes.inputTokens, span.inputTokens),
         int(otelAttributes.outputTokens, span.outputTokens),
         str(langfuseAttributes.input, inputMessages),

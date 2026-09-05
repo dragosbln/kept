@@ -1,58 +1,12 @@
 // --- Vocabulary -------------------------------------------------------------
 
-/**
- * Well-known error classes; the list grows as fault toggles land. `_OTHER`
- * is OTel's conventional fallback for "an error outside the known classes".
- */
-export type WellKnownErrorType = 'timeout' | '_OTHER';
-
-/**
- * Low-cardinality error identifier, OTel `error.type` style: prefer a
- * WellKnownErrorType, otherwise any stable identifier (an HTTP status code,
- * an exception class name) — never free-form message text, so errors stay
- * groupable in dashboards and eval assertions.
- */
-export type ErrorType = WellKnownErrorType | (string & {});
+import type { ErrorType, Message, ToolArgs, ToolResultState } from '../messages.js';
 
 /** Which commerce backend served the conversation's tools. */
 export type BackendKind = 'demo' | 'medusa';
 
 /** Lifecycle of a span. `undetermined` = still open when the trace ended. */
 export type SpanStatus = 'in_progress' | 'completed' | 'undetermined' | 'error';
-
-/** Outcome of a tool call — deliberately distinct from SpanStatus. */
-export type ToolResultState = 'ok' | 'failed' | 'unknown';
-
-export type MessageRole = 'user' | 'assistant' | 'tool' | 'system';
-
-/** Tool arguments — one shape wherever a tool call appears. */
-export type ToolArgs = Record<string, unknown>;
-
-// --- Messages ---------------------------------------------------------------
-
-export type MessagePart =
-  | {
-      type: 'text';
-      content: string;
-    }
-  | {
-      type: 'tool_call';
-      id: string;
-      name: string;
-      args: ToolArgs;
-    }
-  | {
-      type: 'tool_call_response';
-      id: string;
-      response: string;
-      status: ToolResultState;
-    };
-
-export type Message = {
-  role: MessageRole;
-  parts: MessagePart[];
-  finishReason?: string;
-};
 
 // --- Span payloads ----------------------------------------------------------
 // Each span kind splits its fields two ways: the Start subset (knowable when
@@ -78,8 +32,6 @@ export type ModelCallPayload = {
   promptHash: string;
   providerName: string;
   model: string;
-  topK: number;
-  temperature: number;
   inputTokens?: number;
   outputTokens?: number;
   inputMessages: Message[];
@@ -105,17 +57,36 @@ export type EndToolExecutionPayload = Pick<ToolExecutionPayload, 'resultState' |
 
 export type StartToolExecutionPayload = Omit<ToolExecutionPayload, keyof EndToolExecutionPayload>;
 
-export type TurnOutcome = {
-  type: 'reply';
-  message: string;
-};
+/**
+ * Why a turn ended without a reply. `refusal` and `max_tokens` mirror the
+ * model's stop reasons; `unknown_stop_reason` is a stop reason outside the
+ * known set; `empty_reply` is an end_turn with no text to show the customer;
+ * `max_rounds` is the turn's tool-round budget running out; `internal` is
+ * anything that crossed a contract boundary: an exception, a transport error,
+ * or a response the model client should never produce.
+ */
+export type TurnFailureReason =
+  'internal' | 'max_rounds' | 'refusal' | 'max_tokens' | 'unknown_stop_reason' | 'empty_reply';
+
+export type TurnOutcome =
+  | {
+      type: 'reply';
+      message: string;
+    }
+  | {
+      type: 'failed';
+      reason: TurnFailureReason;
+    }
+  | {
+      type: 'conversation_full';
+    };
 
 export type TurnPayload = {
   customerInput: string;
   outcome?: TurnOutcome;
 };
 
-export type EndTurnPayload = Pick<TurnPayload, 'outcome'>;
+export type EndTurnPayload = Required<Pick<TurnPayload, 'outcome'>>;
 
 export type StartTurnPayload = Omit<TurnPayload, keyof EndTurnPayload>;
 

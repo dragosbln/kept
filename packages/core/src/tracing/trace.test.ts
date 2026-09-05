@@ -24,8 +24,6 @@ const modelCallStart: StartModelCallPayload = {
   promptHash: 'cafebabe',
   providerName: 'anthropic',
   model: 'claude-sonnet-5',
-  topK: 40,
-  temperature: 0.2,
   inputMessages: [{ role: 'user', parts: [{ type: 'text', content: 'Where is my order?' }] }],
 };
 
@@ -55,13 +53,21 @@ function recordOneConversation(): Trace {
   });
   tool.end({ resultState: 'ok', result: { status: 'shipped' } });
 
-  // Started, never ended: must be swept as `undetermined`.
+  turn.end({ outcome: { type: 'reply', message: 'It shipped.' } });
+  return trace;
+}
+
+// A turn whose tool span is never ended. In dev, end() refuses to finalize
+// this trace (an open span at trace end is a loop bug); only production may
+// end() it, where the sweep records the span as `undetermined`.
+function recordConversationWithAbandonedTool(): Trace {
+  const trace = new Trace(traceConfig);
+  const turn = trace.startTurnSpan(null, { customerInput: 'Where is my order?' });
   trace.startToolExecutionSpan(turn.id, {
     callId: 'call_2',
     toolName: 'get_order_status',
     args: { orderNumber: '7' },
   });
-
   turn.end({ outcome: { type: 'reply', message: 'It shipped.' } });
   return trace;
 }
@@ -69,22 +75,29 @@ function recordOneConversation(): Trace {
 describe('Trace recorder', () => {
   it('collects all spans in start order with durations stamped', () => {
     const completed = recordOneConversation().end();
-    expect(completed.spans.map((s) => s.kind)).toEqual([
-      'turn',
-      'model_call',
-      'tool_execution',
-      'tool_execution',
-    ]);
+    expect(completed.spans.map((s) => s.kind)).toEqual(['turn', 'model_call', 'tool_execution']);
     for (const span of completed.spans) {
       expect(span.duration).toBeGreaterThanOrEqual(0);
       expect(span.traceId).toBe(completed.id);
     }
   });
 
-  it('sweeps unended spans as undetermined, keeps ended ones completed', () => {
-    const completed = recordOneConversation().end();
-    const statuses = completed.spans.map((s) => s.status);
-    expect(statuses).toEqual(['completed', 'completed', 'completed', 'undetermined']);
+  describe('unended spans at trace end', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('throws outside production, where an open span at trace end is a loop bug', () => {
+      vi.stubEnv('NODE_ENV', 'development');
+      const trace = recordConversationWithAbandonedTool();
+      expect(() => trace.end()).toThrow(/in_progress/);
+    });
+
+    it('sweeps unended spans as undetermined in production, keeps ended ones completed', () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      const completed = recordConversationWithAbandonedTool().end();
+      expect(completed.spans.map((s) => s.status)).toEqual(['completed', 'undetermined']);
+    });
   });
 
   it('records the customer-visible turn boundary', () => {
@@ -111,7 +124,7 @@ describe('Trace recorder', () => {
     const first = trace.end();
     const second = trace.end();
     expect(second).toBe(first);
-    expect(first.spans).toHaveLength(4);
+    expect(first.spans).toHaveLength(3);
   });
 
   describe('starting a span after end()', () => {
@@ -134,7 +147,7 @@ describe('Trace recorder', () => {
       const first = trace.end();
       trace.startTurnSpan(null, { customerInput: 'late arrival' });
       expect(trace.end()).toBe(first);
-      expect(first.spans).toHaveLength(4);
+      expect(first.spans).toHaveLength(3);
     });
   });
 });
@@ -142,6 +155,10 @@ describe('Trace recorder', () => {
 describe('OTLP mapper', () => {
   const completed = recordOneConversation().end();
   const spans = mapTraceToOTLPEnvelope(completed).resourceSpans[0]!.scopeSpans[0]!.spans;
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
 
   it('emits OTel-valid ids and preserves parenthood', () => {
     for (const span of spans) {
@@ -188,7 +205,11 @@ describe('OTLP mapper', () => {
   });
 
   it('maps the swept span to an error status without inventing an output', () => {
-    const abandoned = spans.find((s) =>
+    // Sweeping only happens in production; in dev the same trace refuses to end().
+    vi.stubEnv('NODE_ENV', 'production');
+    const swept = mapTraceToOTLPEnvelope(recordConversationWithAbandonedTool().end())
+      .resourceSpans[0]!.scopeSpans[0]!.spans;
+    const abandoned = swept.find((s) =>
       s.attributes.some((a) => a.value.stringValue === 'call_2'),
     )!;
     expect(abandoned.status).toEqual({ code: 2, message: 'undetermined' });
