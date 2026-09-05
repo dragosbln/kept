@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kept widget — demo storefront</title>
+    <style>
+      /* Deliberately opinionated page styles: the widget's shadow DOM must
+         shrug all of this off. */
+      * {
+        font-family: Georgia, 'Times New Roman', serif;
+      }
+      body {
+        margin: 0;
+        background: #f2ede4;
+        color: #2c2a26;
+        line-height: 2;
+        font-size: 19px;
+      }
+      header {
+        background: #2c2a26;
+        color: #f2ede4;
+        padding: 18px 32px;
+        display: flex;
+        align-items: baseline;
+        gap: 16px;
+      }
+      header h1 {
+        margin: 0;
+        font-size: 22px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      header span {
+        font-size: 13px;
+        opacity: 0.7;
+      }
+      main {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 40px 24px 120px;
+      }
+      .card {
+        background: #fff;
+        border: 1px solid #d8d2c4;
+        border-radius: 6px;
+        padding: 24px 28px;
+        margin-bottom: 24px;
+      }
+      .card h2 {
+        margin-top: 0;
+        font-size: 20px;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 15px;
+        background: #eee8db;
+        padding: 1px 6px;
+        border-radius: 4px;
+      }
+      table {
+        border-collapse: collapse;
+        font-size: 15px;
+        line-height: 1.5;
+      }
+      td {
+        padding: 4px 14px 4px 0;
+        vertical-align: top;
+      }
+      .muted {
+        font-size: 14px;
+        color: #6d675c;
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Blaze Outfitters</h1>
+      <span>a fake storefront for the Kept widget</span>
+    </header>
+    <main>
+      <div class="card">
+        <h2>Try the widget</h2>
+        <p>
+          The launcher sits bottom-right. By default it talks to a scripted
+          <code>MockTransport</code>; the happy path mirrors the demo backend's
+          <code>order-1001</code> / <code>dana@example.com</code>
+          (say hi, then send both to get "verified" and a tracking link).
+        </p>
+        <p class="muted">
+          To point it at a running agent service instead, add
+          <code>?endpoint=http://localhost:3100</code> to this page's URL.
+        </p>
+      </div>
+      <div class="card">
+        <h2>Force a failure (mock only)</h2>
+        <table>
+          <tr>
+            <td><code>/fail</code></td>
+            <td>turn fails server-side → message marked not delivered, retryable</td>
+          </tr>
+          <tr>
+            <td><code>/refuse</code></td>
+            <td>model refusal outcome → same customer-facing failure state</td>
+          </tr>
+          <tr>
+            <td><code>/full</code></td>
+            <td>conversation_full → composer swaps for "start a new conversation"</td>
+          </tr>
+          <tr>
+            <td><code>/locked</code></td>
+            <td>HTTP 409 conversation lock → "still being handled" copy</td>
+          </tr>
+          <tr>
+            <td><code>/timeout</code></td>
+            <td>transport timeout → delivery <em>unconfirmed</em>, not failed</td>
+          </tr>
+          <tr>
+            <td><code>/offline</code></td>
+            <td>network error → delivery unconfirmed</td>
+          </tr>
+          <tr>
+            <td><code>/garbage</code></td>
+            <td>unparseable 200 → delivery unconfirmed</td>
+          </tr>
+        </table>
+        <p class="muted">
+          failed vs unconfirmed is the point: the widget only claims a message failed when the
+          server is known not to have processed it.
+        </p>
+      </div>
+    </main>
+    <script type="module">
+      import { createKeptWidget, MockTransport } from '../dist/index.js';
+
+      const endpoint = new URLSearchParams(location.search).get('endpoint');
+      createKeptWidget(
+        endpoint
+          ? { endpoint, title: 'Blaze Outfitters — Support' }
+          : {
+              transport: new MockTransport({ delayMs: 700 }),
+              title: 'Blaze Outfitters — Support',
+              storage: 'none',
+            },
+      );
+    </script>
+  </body>
+</html>
