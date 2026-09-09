@@ -52,11 +52,31 @@ describe('lookup_order', () => {
     expect(result.response).not.toContain(order.email);
   });
 
-  it('serializes the model-facing response from the sanitized order', async () => {
+  it('presents money pre-formatted to the model and keeps raw minor units out of its view', async () => {
     const { backend } = fakeBackend([order]);
     const registry = createToolRegistry(backend);
     const result = await registry.lookup_order.execute({ orderId: order.id }, ctx);
-    expect(JSON.parse(result.response)).toEqual(result.result);
+    const view = JSON.parse(result.response) as {
+      items: Record<string, unknown>[];
+      total: string;
+      createdAt: string;
+    };
+    // order-1001: 1 × $20.50 + 2 × $45.59 = $111.68 — the model never computes this.
+    expect(view.items[0]).toMatchObject({ unitPrice: '$20.50', lineTotal: '$20.50' });
+    expect(view.items[1]).toMatchObject({ unitPrice: '$45.59', lineTotal: '$91.18' });
+    expect(view.total).toBe('$111.68');
+    expect(view.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(result.response).not.toContain('MinorUnits');
+    // The trace-facing record still carries the raw values.
+    expect(result.result).toMatchObject({ totalMinorUnits: 11168 });
+  });
+
+  it('formats non-USD currencies with their own symbol', async () => {
+    const euroOrder = makeDemoOrders().find((candidate) => candidate.currency === 'EUR')!;
+    const { backend } = fakeBackend([euroOrder]);
+    const registry = createToolRegistry(backend);
+    const result = await registry.lookup_order.execute({ orderId: euroOrder.id }, ctx);
+    expect((JSON.parse(result.response) as { total: string }).total).toBe('€159.00');
   });
 
   it('asks the backend for exactly the requested order id', async () => {
