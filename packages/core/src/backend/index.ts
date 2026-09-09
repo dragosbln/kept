@@ -1,5 +1,5 @@
 export type { OrderBackend } from './order-backend.js';
-export { sanitizeOrderForModel } from './utils.js';
+export { formatMoney, sanitizeOrderForModel } from './utils.js';
 export type {
   Order,
   SanitizedOrder,
