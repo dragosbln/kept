@@ -8,7 +8,10 @@ fault-injection toggles.
 
 Medusa-first adapter over a platform-agnostic core. TypeScript. MIT.
 
-> Status: pre-v0, under active construction. Nothing here is stable yet.
+> Status: pre-v0, under active construction. Built so far: the trace
+> layer, the agent loop with its tool layer, and the chat widget. The
+> trust layer (approval queue, caps, idempotency), retrieval, and the
+> eval runner are next. Nothing here is stable yet.
 
 ## Repository layout
 
@@ -44,11 +47,30 @@ there is no click-through setup.
 | Postgres       | `localhost:5432`      |
 | MinIO console  | http://localhost:9091 |
 
+The agent service needs a model key. Put one in `.env` before starting it:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-...      # or OPENAI_API_KEY with KEPT_PROVIDER=openai
+```
+
 Then:
 
 ```bash
 pnpm dev
 ```
+
+`pnpm dev` reads `.env` from the repo root. Without a key it exits at boot
+rather than failing on the first message; without Langfuse keys it runs
+and logs that traces stay local.
+
+To see the widget against the running service:
+
+```bash
+pnpm demo:widget
+```
+
+Open the printed URL with `?endpoint=http://localhost:3100`. Without that
+query parameter the demo runs on a scripted mock and needs no server.
 
 ### Everyday commands
 
@@ -82,20 +104,22 @@ They belong in CI.
 
 ## Architecture
 
-<!--
-  TODO (hand-written, per the learning contract): the annotated
-  architecture sections are the public form of the exit test and are not
-  to be ghost-written.
+Annotated architecture notes are written by hand as each piece lands, and
+are not yet published here. Planned sections:
 
-  - The trace model: spans, OTel GenAI attribute conventions, what gets
-    stamped on every conversation and why.
-  - The agent loop: states, stop conditions, streaming.
-  - The policy engine: how caps compose, and why prompt-level guards were
-    tried first and abandoned.
-  - Tool-result states: why `unknown` is not `failed`.
-  - Retrieval: chunking, thresholds, source tiers, staleness.
-  - The eval matrix: what each fault toggle proves.
--->
+- The trace model: spans, OTel GenAI attribute conventions, what gets
+  stamped on every conversation and why.
+- The agent loop: states, stop conditions, streaming.
+- The policy engine: how caps compose, and why prompt-level guards were
+  tried first and abandoned.
+- Tool-result states: why `unknown` is not `failed`.
+- Retrieval: chunking, thresholds, source tiers, staleness.
+- The eval matrix: what each fault toggle proves.
+
+Until then the code is commented for readers: every core module opens
+with a comment stating its contract and invariants — start with
+[`packages/core/src/agent/loop.ts`](packages/core/src/agent/loop.ts) and
+[`packages/core/src/tracing/types.ts`](packages/core/src/tracing/types.ts).
 
 ## License
 
