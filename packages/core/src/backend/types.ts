@@ -50,3 +50,34 @@ export type SanitizedOrder = Pick<
   | 'items'
   | 'shipments'
 >;
+
+export type IssueRefundParams = {
+  key: string;
+  orderId: string;
+  orderItemId: string;
+  quantity: number;
+};
+
+export type RefundErrorType =
+  | 'order_not_found'
+  | 'line_not_found'
+  | 'quantity_exceeds_unrefunded'
+  | 'not_refundable'
+  | 'quantity_invalid'
+  | '_OTHER';
+
+export type IssueRefundResponse =
+  | {
+      status: 'ok';
+      refundId: string;
+      amountMinorUnits: number;
+      currency: Currency;
+    }
+  | {
+      status: 'failed';
+      errorType: RefundErrorType;
+      error?: unknown;
+    }
+  | {
+      status: 'unknown';
+    };

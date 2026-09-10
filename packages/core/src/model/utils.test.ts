@@ -12,6 +12,9 @@ const unreachableBackend: OrderBackend = {
   findOrder: () => {
     throw new Error('wire-format translation must never execute tools');
   },
+  issueRefund: () => {
+    throw new Error('wire-format translation must never execute tools');
+  },
 };
 
 describe('toModelToolRegistry', () => {

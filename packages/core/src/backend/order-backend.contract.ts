@@ -97,5 +97,140 @@ export function describeOrderBackendContract(
       const second = await backend.findOrder('order-1001');
       expect(second).toEqual<Order | null>(first);
     });
+
+    // The backend owns exactly one invariant on refunds: a positive integer
+    // quantity, no larger than what the line contains minus what was already
+    // refunded. Everything else — delivery status, caps, approval — is policy
+    // and sits in front of this port. The idempotency key is passed but its
+    // semantics are not pinned here yet (they arrive with the ledger).
+    describe('issueRefund', () => {
+      it('refunds a line at unit price × quantity, in the order currency', async () => {
+        const backend = await makeBackend();
+        const response = await backend.issueRefund({
+          key: 'contract-refund-1',
+          orderId: 'order-1005',
+          orderItemId: 'order-1005-line-1', // 1 × $79.00
+          quantity: 1,
+        });
+        expect(response).toMatchObject({
+          status: 'ok',
+          amountMinorUnits: 7900,
+          currency: 'USD',
+          refundId: expect.any(String),
+        });
+      });
+
+      it('computes the amount from the line, never from the caller', async () => {
+        const backend = await makeBackend();
+        const response = await backend.issueRefund({
+          key: 'contract-refund-2',
+          orderId: 'order-1001',
+          orderItemId: 'order-1001-line-2', // Wool Socks, 2 × $45.59
+          quantity: 2,
+        });
+        expect(response).toMatchObject({ status: 'ok', amountMinorUnits: 9118, currency: 'USD' });
+      });
+
+      it('does not check delivery: an in-transit line refunds at this layer', async () => {
+        // Delivery is a policy rule, enforced in front of the port. A backend
+        // that refused here would hide the policy engine's decision.
+        const backend = await makeBackend();
+        const inTransit = (await backend.findOrder('order-1001'))!;
+        expect(inTransit.status).toBe('shipped');
+        const response = await backend.issueRefund({
+          key: 'contract-refund-3',
+          orderId: 'order-1001',
+          orderItemId: 'order-1001-line-1',
+          quantity: 1,
+        });
+        expect(response.status).toBe('ok');
+      });
+
+      it('rejects a quantity beyond what the line contains, on the first refund too', async () => {
+        const backend = await makeBackend();
+        const response = await backend.issueRefund({
+          key: 'contract-refund-4',
+          orderId: 'order-1004',
+          orderItemId: 'order-1004-line-1', // qty 1
+          quantity: 2,
+        });
+        expect(response).toEqual({ status: 'failed', errorType: 'quantity_exceeds_unrefunded' });
+      });
+
+      it('shrinks the refundable quantity with every refund', async () => {
+        const backend = await makeBackend();
+        const params = {
+          orderId: 'order-1002',
+          orderItemId: 'order-1002-line-1', // Trail Boots, qty 2
+          quantity: 1,
+        };
+        expect((await backend.issueRefund({ key: 'contract-refund-5a', ...params })).status).toBe(
+          'ok',
+        );
+        expect((await backend.issueRefund({ key: 'contract-refund-5b', ...params })).status).toBe(
+          'ok',
+        );
+        expect(await backend.issueRefund({ key: 'contract-refund-5c', ...params })).toEqual({
+          status: 'failed',
+          errorType: 'quantity_exceeds_unrefunded',
+        });
+      });
+
+      it('rejects zero, negative and fractional quantities as invalid', async () => {
+        const backend = await makeBackend();
+        const quantities = [0, -1, 0.5];
+        const responses = await Promise.all(
+          quantities.map((quantity) =>
+            backend.issueRefund({
+              key: `contract-refund-6-${quantity}`,
+              orderId: 'order-1005',
+              orderItemId: 'order-1005-line-1',
+              quantity,
+            }),
+          ),
+        );
+        responses.forEach((response, index) => {
+          expect(response, `quantity ${quantities[index]}`).toEqual({
+            status: 'failed',
+            errorType: 'quantity_invalid',
+          });
+        });
+      });
+
+      it('fails, never throws, for unknown orders, unknown lines and degenerate ids', async () => {
+        const backend = await makeBackend();
+        expect(
+          await backend.issueRefund({
+            key: 'contract-refund-7a',
+            orderId: 'nope',
+            orderItemId: 'order-1005-line-1',
+            quantity: 1,
+          }),
+        ).toEqual({ status: 'failed', errorType: 'order_not_found' });
+        expect(
+          await backend.issueRefund({
+            key: 'contract-refund-7b',
+            orderId: 'order-1005',
+            orderItemId: 'order-1004-line-1',
+            quantity: 1,
+          }),
+        ).toEqual({ status: 'failed', errorType: 'line_not_found' });
+        expect(
+          await backend.issueRefund({ key: '', orderId: '', orderItemId: '', quantity: 1 }),
+        ).toMatchObject({ status: 'failed' });
+      });
+
+      it('never mutates the canonical order: refunds are recorded beside it, not on it', async () => {
+        const backend = await makeBackend();
+        const before = structuredClone(await backend.findOrder('order-1005'));
+        await backend.issueRefund({
+          key: 'contract-refund-8',
+          orderId: 'order-1005',
+          orderItemId: 'order-1005-line-1',
+          quantity: 1,
+        });
+        expect(await backend.findOrder('order-1005')).toEqual(before);
+      });
+    });
   });
 }

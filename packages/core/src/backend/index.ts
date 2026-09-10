@@ -7,6 +7,9 @@ export type {
   Currency,
   OrderItem,
   OrderShipment,
+  IssueRefundParams,
+  IssueRefundResponse,
+  RefundErrorType,
 } from './types.js';
 export { DemoBackend } from './demo.js';
 export { makeDemoOrders } from './seed-orders.js';

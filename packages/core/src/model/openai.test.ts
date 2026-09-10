@@ -22,6 +22,9 @@ const unreachableBackend: OrderBackend = {
   findOrder: () => {
     throw new Error('model-client tests must never execute tools');
   },
+  issueRefund: () => {
+    throw new Error('model-client tests must never execute tools');
+  },
 };
 
 const config: ModelClientConfig = {

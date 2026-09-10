@@ -10,6 +10,7 @@ import type { ToolExecuteContext } from './types.js';
 import type { Order } from '../backend/types.js';
 import type { OrderBackend } from '../backend/order-backend.js';
 import { makeDemoOrders } from '../backend/seed-orders.js';
+import { DemoBackend } from '../backend/demo.js';
 
 const order: Order = makeDemoOrders()[0]!;
 
@@ -18,14 +19,20 @@ type FakeBackendReturnType = {
   requestedIds: string[];
 };
 
-/** Fake backend that serves one order and records what it was asked for. */
+/**
+ * Fake backend that serves the given stock and records which orders it was
+ * asked for. Refunds delegate to a DemoBackend over the same stock, so the
+ * refund tool's tests get the real quantity bookkeeping without a second fake.
+ */
 function fakeBackend(stock: Order[]): FakeBackendReturnType {
   const requestedIds: string[] = [];
+  const demo = new DemoBackend(stock);
   const backend: OrderBackend = {
     findOrder: async (orderId) => {
       requestedIds.push(orderId);
       return stock.find((candidate) => candidate.id === orderId) ?? null;
     },
+    issueRefund: (params) => demo.issueRefund(params),
   };
   return { backend, requestedIds };
 }
