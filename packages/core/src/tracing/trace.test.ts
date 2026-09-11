@@ -1,8 +1,9 @@
 // Unit tests for the trace recorder and the OTLP mapper. These run in the
 // eval matrix's world: in-process, no Langfuse, no network (ADR 0001). The
 // mapper cases pin the wire-format details that broke during development:
-// id formats, nanosecond conversion, undefined-dropping, and the
-// convention-shape message translation (args → arguments).
+// id formats, nanosecond conversion, undefined-dropping, the
+// convention-shape message translation (args → arguments), and the
+// Langfuse-only `result` copy of tool results.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Trace } from './trace.js';
@@ -193,6 +194,59 @@ describe('OTLP mapper', () => {
       arguments: { orderNumber: '7' },
     });
     expect(messages[0].parts[0]).not.toHaveProperty('args');
+  });
+
+  it('gives the Langfuse copy of a tool result a `result` key and keeps the OTel copy pure', () => {
+    // A second-round model call: its input carries the tool result the
+    // model was answering. The Langfuse UI reads that text from `result`;
+    // the convention has only `response`.
+    const trace = new Trace(traceConfig);
+    const turn = trace.startTurnSpan(null, { customerInput: 'Where is my order?' });
+    const call = trace.startModelCallSpan(turn.id, {
+      ...modelCallStart,
+      inputMessages: [
+        ...modelCallStart.inputMessages,
+        {
+          role: 'assistant',
+          parts: [
+            { type: 'tool_call', id: 'call_1', name: 'lookup_order', args: { orderNumber: '7' } },
+          ],
+        },
+        {
+          role: 'user',
+          parts: [
+            {
+              type: 'tool_call_response',
+              id: 'call_1',
+              response: '{"status":"shipped"}',
+              status: 'ok',
+            },
+          ],
+        },
+      ],
+    });
+    call.end({ inputTokens: 1, outputTokens: 1, outputMessages: [] });
+    turn.end({ outcome: { type: 'reply', message: 'It shipped.' } });
+
+    const generation = mapTraceToOTLPEnvelope(
+      trace.end(),
+    ).resourceSpans[0]!.scopeSpans[0]!.spans.find((s) => s.name === 'model_call')!;
+    const partsOf = (key: string): unknown[] => {
+      const attribute = generation.attributes.find((a) => a.key === key)!;
+      return JSON.parse(attribute.value.stringValue!)[2].parts;
+    };
+
+    expect(partsOf('langfuse.observation.input')[0]).toEqual({
+      type: 'tool_call_response',
+      id: 'call_1',
+      response: '{"status":"shipped"}',
+      result: '{"status":"shipped"}',
+    });
+    expect(partsOf('gen_ai.input.messages')[0]).toEqual({
+      type: 'tool_call_response',
+      id: 'call_1',
+      response: '{"status":"shipped"}',
+    });
   });
 
   it('emits the turn preview and outcome type', () => {

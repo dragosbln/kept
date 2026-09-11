@@ -90,7 +90,7 @@ function toOtlpSpanId(id: string): string {
 type OtlpMessagePart =
   | { type: 'text'; content: string }
   | { type: 'tool_call'; id: string; name: string; arguments: ToolArgs }
-  | { type: 'tool_call_response'; id: string; response: string };
+  | { type: 'tool_call_response'; id: string; response: string; result?: string };
 
 type OtlpMessage = {
   role: MessageRole;
@@ -98,7 +98,22 @@ type OtlpMessage = {
   parts: OtlpMessagePart[];
 };
 
-function toOtlpMessages(messages: Message[]): OtlpMessage[] {
+/**
+ * Which consumer the messages are for. `otel` is the convention shape,
+ * untouched. `langfuse` is the same shape plus what the Langfuse UI needs
+ * to render it. Langfuse v4's formatted view routes `parts`-shaped messages
+ * through its pydantic-ai adapter (the first of its adapters whose
+ * structural check they pass), which turns a user message holding tool
+ * results into `tool` messages and reads each one's text from `result`,
+ * never from the convention's `response`; without it the UI shows an empty
+ * Tool block. The dual-emit rule exists for exactly this: the portable
+ * attribute stays pure, the product attribute gets the extra key. Read off
+ * the running bundle on 2026-09-11; revisit if a Langfuse upgrade changes
+ * the rendering.
+ */
+type MessageTarget = 'otel' | 'langfuse';
+
+function toOtlpMessages(messages: Message[], target: MessageTarget = 'otel'): OtlpMessage[] {
   return messages.map((message) => ({
     role: message.role,
     finish_reason: message.finishReason,
@@ -129,6 +144,7 @@ function toOtlpMessages(messages: Message[]): OtlpMessage[] {
               type: part.type,
               id: part.id,
               response: part.response,
+              ...(target === 'langfuse' ? { result: part.response } : {}),
             },
           ];
         default:
@@ -187,14 +203,18 @@ function mapSpanAttributes(trace: CompletedTrace, span: CompletedSpanPayload): O
       const outputMessages = span.outputMessages
         ? JSON.stringify(toOtlpMessages(span.outputMessages))
         : undefined;
+      const inputForLangfuse = JSON.stringify(toOtlpMessages(span.inputMessages, 'langfuse'));
+      const outputForLangfuse = span.outputMessages
+        ? JSON.stringify(toOtlpMessages(span.outputMessages, 'langfuse'))
+        : undefined;
       return [
         ...attributes,
         str(otelAttributes.model, span.model),
         str(otelAttributes.providerName, span.providerName),
         int(otelAttributes.inputTokens, span.inputTokens),
         int(otelAttributes.outputTokens, span.outputTokens),
-        str(langfuseAttributes.input, inputMessages),
-        str(langfuseAttributes.output, outputMessages),
+        str(langfuseAttributes.input, inputForLangfuse),
+        str(langfuseAttributes.output, outputForLangfuse),
         str(otelAttributes.inputMessages, inputMessages),
         str(otelAttributes.outputMessages, outputMessages),
         str(langfuseAttributes.promptName, span.promptName),
