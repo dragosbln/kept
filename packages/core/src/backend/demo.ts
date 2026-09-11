@@ -21,10 +21,8 @@ export class DemoBackend implements OrderBackend {
   }
 
   /**
-   * the backend owns physical invariants: quantity <= ordered minus already refunded
-   * delivery is policy and belongs to the engine
-   * the demo ignores it today; its semantics arrive with idempotency implementation
-   *
+   * See OrderBackend.issueRefund for the contract. The demo ignores `key`
+   * today; replay protection arrives with the idempotency work.
    */
   async issueRefund(params: IssueRefundParams): Promise<IssueRefundResponse> {
     if (params.quantity <= 0 || !Number.isInteger(params.quantity)) {
@@ -40,7 +38,7 @@ export class DemoBackend implements OrderBackend {
         errorType: 'order_not_found',
       };
     }
-    // intentionally skip checking whether order item is shipped, for the scripts
+    // No delivery check here on purpose: delivery is policy, see the port.
     const orderItem = order.items.find((it) => it.id === params.orderItemId);
     if (!orderItem) {
       return {

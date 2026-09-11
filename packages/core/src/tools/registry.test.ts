@@ -104,3 +104,25 @@ describe('lookup_order', () => {
     });
   });
 });
+
+// Step 4 (the refund tool) turns these green. They are written down now so
+// the result-state rule is pinned before the tool exists: three zones in the
+// execute path, and only a throw in the first one may settle as `failed`.
+//   1. before the ledger record: nothing written anywhere → `failed` (the
+//      executor's own catch is enough);
+//   2. record written, backend not yet called: nothing moved, but the
+//      `attempted` record must be settled `failed` before returning;
+//   3. backend called: any throw, ledger or otherwise, is `unknown` with a
+//      "do not retry" — the money may have moved.
+describe('issue_refund', () => {
+  it.todo('ok: records write-ahead, settles ok, and the response never carries the customer key');
+  it.todo('over-quantity: the backend refuses, the record settles failed, resultState is failed');
+  it.todo(
+    'unknown backend outcome: the record settles unknown, resultState is unknown, response says do not retry',
+  );
+  it.todo('a ledger throw after the backend answered ok settles as unknown, never failed');
+  it.todo(
+    'a ledger throw before the backend is called settles as failed and leaves no attempted record',
+  );
+  it.todo('never reports prior refunds in the response (v1.0 blindness is the experiment)');
+});
