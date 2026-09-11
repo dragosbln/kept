@@ -40,7 +40,11 @@ export class LedgerError extends Error {
 }
 
 export interface RefundLedger {
-  /** Opens a record: `pending` when approval is required, `attempted` otherwise. */
+  /**
+   * Opens a record: `pending` when approval is required, `attempted` otherwise.
+   *
+   * TODO: the loop can run tool uses in parallel, so the policy check and the ledger need to be one operation
+   */
   recordRefund(params: RecordRefundParams): Promise<RefundLedgerRecord>;
   /**
    * Closes an `attempted` record with what the backend answered. `ok` carries

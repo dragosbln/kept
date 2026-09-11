@@ -14,9 +14,19 @@ const schema = z.object({ orderId: z.string().trim() });
 
 type Execute = Parameters<typeof defineTool<typeof schema>>[0]['execute'];
 
+/** The registry type requires every tool; these tests only ever dispatch lookup_order. */
+const unreachableRefund = defineTool({
+  description: 'must not run',
+  inputSchema: z.object({}),
+  execute: async () => {
+    throw new Error('executor tests never refund');
+  },
+});
+
 function registryWith(execute: Execute): ToolRegistry {
   return {
     lookup_order: defineTool({ description: 'test tool', inputSchema: schema, execute }),
+    issue_refund: unreachableRefund,
   };
 }
 

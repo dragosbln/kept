@@ -12,11 +12,14 @@ export interface OrderBackend {
    * quantity is a positive integer no larger than what the line contains
    * minus what was already refunded. Everything else — delivery status,
    * caps, approval — is policy, decided in front of this port, so a backend
-   * must not refuse on those grounds. Never throws: a call whose outcome the
+   * must not refuse on those grounds.
+   *
+   * Never throws: a call whose outcome the
    * backend cannot know (the request went out, no answer came back) returns
-   * `unknown`, because that is exactly what the caller must record. `key` is
-   * the idempotency key; its semantics arrive with the idempotency work and
-   * are not pinned yet.
+   * `unknown`, because that is exactly what the caller must record.
+   *
+   * `key` is the idempotency key; its semantics arrive with the idempotency
+   * work and are not pinned yet.
    */
   issueRefund(params: IssueRefundParams): Promise<IssueRefundResponse>;
 }

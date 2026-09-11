@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { ToolResultState } from '../messages.js';
 
-export type ToolName = 'lookup_order';
+export type ToolName = 'lookup_order' | 'issue_refund';
 
 export type ToolResult = {
   resultState: ToolResultState;

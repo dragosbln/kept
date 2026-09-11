@@ -11,11 +11,20 @@ import type { Order } from '../backend/types.js';
 import type { OrderBackend } from '../backend/order-backend.js';
 import { makeDemoOrders } from '../backend/seed-orders.js';
 import { DemoBackend } from '../backend/demo.js';
+import { executeToolCall } from '../agent/executor.js';
+import {
+  InMemoryRefundLedger,
+  LedgerError,
+  customerKeyFor,
+  type RefundLedger,
+} from '../refund-ledger/index.js';
 
 const order: Order = makeDemoOrders()[0]!;
+const orderById = (id: string): Order => makeDemoOrders().find((candidate) => candidate.id === id)!;
 
 type FakeBackendReturnType = {
   backend: OrderBackend;
+  ledger: InMemoryRefundLedger;
   requestedIds: string[];
 };
 
@@ -34,7 +43,7 @@ function fakeBackend(stock: Order[]): FakeBackendReturnType {
     },
     issueRefund: (params) => demo.issueRefund(params),
   };
-  return { backend, requestedIds };
+  return { backend, ledger: new InMemoryRefundLedger(), requestedIds };
 }
 
 const ctx: ToolExecuteContext = {
@@ -46,8 +55,8 @@ const ctx: ToolExecuteContext = {
 
 describe('lookup_order', () => {
   it('returns ok with the sanitized order when the backend finds it', async () => {
-    const { backend } = fakeBackend([order]);
-    const registry = createToolRegistry(backend);
+    const { backend, ledger } = fakeBackend([order]);
+    const registry = createToolRegistry(backend, ledger);
     const result = await registry.lookup_order.execute({ orderId: order.id }, ctx);
     expect(result.resultState).toBe('ok');
     // Sanitization removes exactly the email today; a new sensitive field on
@@ -57,16 +66,16 @@ describe('lookup_order', () => {
   });
 
   it('never leaks the customer email, in neither result nor response', async () => {
-    const { backend } = fakeBackend([order]);
-    const registry = createToolRegistry(backend);
+    const { backend, ledger } = fakeBackend([order]);
+    const registry = createToolRegistry(backend, ledger);
     const result = await registry.lookup_order.execute({ orderId: order.id }, ctx);
     expect(result.result).not.toHaveProperty('email');
     expect(result.response).not.toContain(order.email);
   });
 
   it('presents money pre-formatted to the model and keeps raw minor units out of its view', async () => {
-    const { backend } = fakeBackend([order]);
-    const registry = createToolRegistry(backend);
+    const { backend, ledger } = fakeBackend([order]);
+    const registry = createToolRegistry(backend, ledger);
     const result = await registry.lookup_order.execute({ orderId: order.id }, ctx);
     const view = JSON.parse(result.response) as {
       items: Record<string, unknown>[];
@@ -85,22 +94,22 @@ describe('lookup_order', () => {
 
   it('formats non-USD currencies with their own symbol', async () => {
     const euroOrder = makeDemoOrders().find((candidate) => candidate.currency === 'EUR')!;
-    const { backend } = fakeBackend([euroOrder]);
-    const registry = createToolRegistry(backend);
+    const { backend, ledger } = fakeBackend([euroOrder]);
+    const registry = createToolRegistry(backend, ledger);
     const result = await registry.lookup_order.execute({ orderId: euroOrder.id }, ctx);
     expect((JSON.parse(result.response) as { total: string }).total).toBe('€159.00');
   });
 
   it('asks the backend for exactly the requested order id', async () => {
-    const { backend, requestedIds } = fakeBackend([order]);
-    const registry = createToolRegistry(backend);
+    const { backend, ledger, requestedIds } = fakeBackend([order]);
+    const registry = createToolRegistry(backend, ledger);
     await registry.lookup_order.execute({ orderId: order.id }, ctx);
     expect(requestedIds).toEqual([order.id]);
   });
 
   it('settles as failed — not a throw — when the order does not exist', async () => {
-    const { backend } = fakeBackend([]);
-    const registry = createToolRegistry(backend);
+    const { backend, ledger } = fakeBackend([]);
+    const registry = createToolRegistry(backend, ledger);
     const result = await registry.lookup_order.execute({ orderId: 'no-such-order' }, ctx);
     expect(result).toEqual({
       resultState: 'failed',
@@ -110,24 +119,223 @@ describe('lookup_order', () => {
   });
 });
 
-// Step 4 (the refund tool) turns these green. They are written down now so
-// the result-state rule is pinned before the tool exists: three zones in the
-// execute path, and only a throw in the first one may settle as `failed`.
-//   1. before the ledger record: nothing written anywhere → `failed` (the
-//      executor's own catch is enough);
-//   2. record written, backend not yet called: nothing moved, but the
-//      `attempted` record must be settled `failed` before returning;
+// The refund tool. Beyond the sanitization boundary, what these pin is the
+// result-state rule: three zones in the execute path, and only a throw in
+// the first may settle as `failed`.
+//   1. before the ledger record: nothing written anywhere → `failed`;
+//   2. record written, backend not yet called: nothing has moved;
 //   3. backend called: any throw, ledger or otherwise, is `unknown` with a
 //      "do not retry" — the money may have moved.
+// Response wording is deliberately not pinned here; the model-facing view is
+// read back as JSON, and "Do not retry" is the one phrase the rule owns.
+/** The model-facing view, parsed back out of the response text. */
+const viewIn = (response: string): Record<string, unknown> =>
+  JSON.parse(response.slice(response.indexOf('{'))) as Record<string, unknown>;
+
+/** A ledger that delegates everything except the given method to a real one. */
+function ledgerBreakingOn(
+  real: InMemoryRefundLedger,
+  method: 'recordRefund' | 'settleRefundRecord',
+  error: () => Error,
+): RefundLedger {
+  return {
+    recordRefund: (params) =>
+      method === 'recordRefund' ? Promise.reject(error()) : real.recordRefund(params),
+    settleRefundRecord: (id, response) =>
+      method === 'settleRefundRecord'
+        ? Promise.reject(error())
+        : real.settleRefundRecord(id, response),
+    updateRefundRecordStatus: (id, status) => real.updateRefundRecordStatus(id, status),
+    list: () => real.list(),
+  };
+}
+
 describe('issue_refund', () => {
-  it.todo('ok: records write-ahead, settles ok, and the response never carries the customer key');
-  it.todo('over-quantity: the backend refuses, the record settles failed, resultState is failed');
-  it.todo(
-    'unknown backend outcome: the record settles unknown, resultState is unknown, response says do not retry',
+  const delivered = orderById('order-1005'); // one delivered line, 1 × $79.00
+  const args = { orderId: 'order-1005', orderItemId: 'order-1005-line-1', quantity: 1 };
+  const refundCtx = (callId: string): ToolExecuteContext => ({ ...ctx, callId });
+  it('ok: records before the backend is called, settles ok, and the model reads what actually moved', async () => {
+    const { backend, ledger } = fakeBackend([delivered]);
+    // Observed from inside the backend call: write-ahead means the record is already there.
+    const ledgerDuringBackendCall: string[] = [];
+    const observing: OrderBackend = {
+      ...backend,
+      issueRefund: async (params) => {
+        ledgerDuringBackendCall.push(...(await ledger.list()).map((record) => record.status));
+        return backend.issueRefund(params);
+      },
+    };
+    const registry = createToolRegistry(observing, ledger);
+
+    const result = await registry.issue_refund.execute(args, refundCtx('call-ok'));
+
+    expect(result.resultState).toBe('ok');
+    expect(ledgerDuringBackendCall).toEqual(['attempted']);
+
+    const [record] = await ledger.list();
+    expect(record).toMatchObject({
+      status: 'ok',
+      orderId: 'order-1005',
+      orderItemId: 'order-1005-line-1',
+      quantity: 1,
+      amountMinorUnits: 7900,
+      currency: 'USD',
+      refundedAmountMinorUnits: 7900,
+      refundedAmountCurrency: 'USD',
+      backendRefundId: expect.any(String),
+      callId: 'call-ok',
+      conversationId: ctx.conversationId,
+      promptHash: ctx.promptHash,
+      customerKey: customerKeyFor(delivered),
+    });
+    // Trace-facing: the whole record. Model-facing: the allowlisted view only.
+    expect(result.result).toEqual(record);
+    expect(viewIn(result.response)).toEqual({
+      status: 'ok',
+      orderId: 'order-1005',
+      orderItemId: 'order-1005-line-1',
+      quantity: 1,
+      currency: 'USD',
+      refundId: record!.backendRefundId,
+      amount: '$79.00',
+    });
+  });
+
+  it('never carries the customer key, the email or raw minor units in the response', async () => {
+    const { backend, ledger } = fakeBackend([delivered]);
+    const registry = createToolRegistry(backend, ledger);
+    const result = await registry.issue_refund.execute(args, refundCtx('call-key'));
+    expect(result.resultState).toBe('ok');
+    expect(result.response).not.toContain(customerKeyFor(delivered));
+    expect(result.response).not.toContain(delivered.email);
+    expect(result.response).not.toContain('MinorUnits');
+    expect(result.response).not.toContain(ctx.promptHash);
+  });
+
+  it('over-quantity: the backend refuses, the record settles failed, resultState is failed', async () => {
+    const { backend, ledger } = fakeBackend([delivered]);
+    const registry = createToolRegistry(backend, ledger);
+    const result = await registry.issue_refund.execute(
+      { ...args, quantity: 2 },
+      refundCtx('call-over'),
+    );
+    expect(result.resultState).toBe('failed');
+    expect(result.response).toContain('quantity_exceeds_unrefunded');
+    expect((await ledger.list()).map((record) => record.status)).toEqual(['failed']);
+  });
+
+  it.each([
+    ['quantity 0', { ...args, quantity: 0 }],
+    ['negative quantity', { ...args, quantity: -1 }],
+    ['fractional quantity', { ...args, quantity: 0.5 }],
+    ['unknown order', { ...args, orderId: 'no-such-order' }],
+    ['unknown line', { ...args, orderItemId: 'no-such-line' }],
+  ])('%s fails in zone 1: nothing written, backend never asked', async (_label, input) => {
+    const { backend, ledger } = fakeBackend([delivered]);
+    let refundCalls = 0;
+    const counting: OrderBackend = {
+      ...backend,
+      issueRefund: (params) => {
+        refundCalls += 1;
+        return backend.issueRefund(params);
+      },
+    };
+    const registry = createToolRegistry(counting, ledger);
+    const result = await registry.issue_refund.execute(input, refundCtx('call-zone1'));
+    expect(result.resultState).toBe('failed');
+    expect(await ledger.list()).toEqual([]);
+    expect(refundCalls).toBe(0);
+  });
+
+  it('unknown backend outcome: the record settles unknown, resultState is unknown, response says do not retry', async () => {
+    const { backend, ledger } = fakeBackend([delivered]);
+    const vanishing: OrderBackend = {
+      ...backend,
+      issueRefund: async () => ({ status: 'unknown' }),
+    };
+    const registry = createToolRegistry(vanishing, ledger);
+    const result = await registry.issue_refund.execute(args, refundCtx('call-unknown'));
+    expect(result.resultState).toBe('unknown');
+    expect(result.response).toContain('Do not retry');
+    expect((await ledger.list()).map((record) => record.status)).toEqual(['unknown']);
+  });
+
+  it.each([
+    ['a LedgerError', (): Error => new LedgerError('record_not_found', 'gone')],
+    ['a plain Error', (): Error => new Error('ledger connection lost')],
+  ])(
+    '%s from the ledger after the backend answered ok settles as unknown, never failed',
+    async (_label, error) => {
+      const { backend, ledger } = fakeBackend([delivered]);
+      const registry = createToolRegistry(
+        backend,
+        ledgerBreakingOn(ledger, 'settleRefundRecord', error),
+      );
+
+      const result = await registry.issue_refund.execute(args, refundCtx('call-settle-throw'));
+
+      expect(result.resultState).toBe('unknown');
+      expect(result.response).toContain('Do not retry');
+      // The backend's answer survives in the trace, and the money did move:
+      // the line is now fully refunded at the backend.
+      expect(result.result).toMatchObject({
+        backendResponse: { status: 'ok', amountMinorUnits: 7900 },
+      });
+      expect(await backend.issueRefund({ key: 'probe', ...args })).toMatchObject({
+        errorType: 'quantity_exceeds_unrefunded',
+      });
+      // The record stays `attempted`: the documented crash signature.
+      expect((await ledger.list()).map((record) => record.status)).toEqual(['attempted']);
+    },
   );
-  it.todo('a ledger throw after the backend answered ok settles as unknown, never failed');
-  it.todo(
-    'a ledger throw before the backend is called settles as failed and leaves no attempted record',
-  );
-  it.todo('never reports prior refunds in the response (v1.0 blindness is the experiment)');
+
+  it('a ledger throw before the backend is called settles as failed and the backend is never asked', async () => {
+    const { backend, ledger } = fakeBackend([delivered]);
+    let refundCalls = 0;
+    const counting: OrderBackend = {
+      ...backend,
+      issueRefund: (params) => {
+        refundCalls += 1;
+        return backend.issueRefund(params);
+      },
+    };
+    const registry = createToolRegistry(
+      counting,
+      ledgerBreakingOn(ledger, 'recordRefund', () => new Error('ledger down')),
+    );
+
+    // Through the executor: its catch is the contract for zone 1.
+    const settled = await executeToolCall(registry, {
+      callId: 'call-record-throw',
+      name: 'issue_refund',
+      conversationId: ctx.conversationId,
+      promptHash: ctx.promptHash,
+      args,
+    });
+
+    expect(settled.resultState).toBe('failed');
+    expect(refundCalls).toBe(0);
+    expect(await ledger.list()).toEqual([]);
+  });
+
+  it('never reports prior refunds in the response (v1.0 blindness is the experiment)', async () => {
+    const boots = orderById('order-1002'); // same customer as order-1005
+    const { backend, ledger } = fakeBackend([boots, delivered]);
+    const registry = createToolRegistry(backend, ledger);
+
+    const first = await registry.issue_refund.execute(
+      { orderId: 'order-1002', orderItemId: 'order-1002-line-1', quantity: 1 }, // 1 × $89.00
+      refundCtx('call-first'),
+    );
+    const second = await registry.issue_refund.execute(args, refundCtx('call-second'));
+
+    expect(first.resultState).toBe('ok');
+    expect(second.resultState).toBe('ok');
+    const [firstRecord] = await ledger.list();
+    expect(second.response).not.toContain(firstRecord!.backendRefundId!);
+    expect(second.response).not.toContain('$89.00');
+    expect(Object.keys(viewIn(second.response)).toSorted()).toEqual(
+      ['amount', 'currency', 'orderId', 'orderItemId', 'quantity', 'refundId', 'status'].toSorted(),
+    );
+  });
 });

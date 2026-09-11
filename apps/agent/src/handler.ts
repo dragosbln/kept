@@ -9,6 +9,7 @@ import {
   CodePromptManager,
   DemoBackend,
   InMemoryConversationStore,
+  InMemoryRefundLedger,
   LangfuseExporter,
   OpenAIModelClient,
   Trace,
@@ -23,6 +24,7 @@ import type {
   ModelClientConfig,
   OrderBackend,
   PromptData,
+  RefundLedger,
   ToolRegistry,
   TraceExporter,
   TurnOutcome,
@@ -139,19 +141,37 @@ export type AgentService = {
   shutdown(): Promise<void>;
 };
 
-export async function createAgentService(config: AgentServiceConfig): Promise<AgentService> {
+/**
+ * Replacements for what the service would otherwise build from config. The
+ * attack driver injects its own ledger (to read it back after a run) and its
+ * own exporter (to keep traces in memory beside Langfuse); tests inject a
+ * backend. Production passes nothing.
+ */
+export type AgentServiceDeps = {
+  backend?: OrderBackend;
+  ledger?: RefundLedger;
+  exporter?: TraceExporter;
+};
+
+export async function createAgentService(
+  config: AgentServiceConfig,
+  deps: AgentServiceDeps = {},
+): Promise<AgentService> {
   const promptData = await new CodePromptManager().getVersionedPromptData(
     'main-agent',
     config.promptVersion,
   );
-  const registry = createToolRegistry(getBackend(config.backendKind));
+  const backend = deps.backend ?? getBackend(config.backendKind);
+  // One ledger per process, shared by every conversation: per-customer and
+  // per-day caps, and the cross-conversation attacks, all depend on that.
+  const ledger = deps.ledger ?? new InMemoryRefundLedger();
+  const registry = createToolRegistry(backend, ledger);
   const modelClient = buildModelClient(config, promptData, registry);
   const store = new InMemoryConversationStore();
   const locks = new ConversationLocks();
 
-  const exporter: TraceExporter | undefined = config.langfuse
-    ? new LangfuseExporter(config.langfuse)
-    : undefined;
+  const exporter: TraceExporter | undefined =
+    deps.exporter ?? (config.langfuse ? new LangfuseExporter(config.langfuse) : undefined);
   if (!exporter) {
     console.warn('agent service: LANGFUSE_PUBLIC_KEY/SECRET_KEY unset — traces stay local');
   }

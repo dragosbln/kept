@@ -18,6 +18,7 @@ import { defineTool } from '../tools/utils.js';
 import type { ToolRegistry } from '../tools/types.js';
 import { DemoBackend } from '../backend/demo.js';
 import { makeDemoOrders } from '../backend/seed-orders.js';
+import { InMemoryRefundLedger } from '../refund-ledger/index.js';
 import type { ModelClient } from '../model/client.js';
 import type { CallModelResponse, ModelClientConfig } from '../model/types.js';
 import type { Message, ToolArgs } from '../messages.js';
@@ -89,7 +90,7 @@ function toolUse(calls: { id: string; name: string; args: ToolArgs }[]): CallMod
   };
 }
 
-const registry = createToolRegistry(new DemoBackend(makeDemoOrders()));
+const registry = createToolRegistry(new DemoBackend(makeDemoOrders()), new InMemoryRefundLedger());
 
 type RunReturnType = {
   trace: Trace;
@@ -217,6 +218,7 @@ describe('runTurn', () => {
           return { resultState: 'ok', result: null, response: 'seen' };
         },
       }),
+      issue_refund: registry.issue_refund,
     };
 
     await run(
@@ -514,6 +516,7 @@ describe('runTurn', () => {
         inputSchema: z.object({ orderId: z.string() }),
         execute: () => new Promise(() => {}),
       }),
+      issue_refund: registry.issue_refund,
     };
     const { trace, promise } = run(
       [

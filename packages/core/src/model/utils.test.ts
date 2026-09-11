@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { toModelToolRegistry } from './utils.js';
 import { createToolRegistry } from '../tools/registry.js';
 import type { OrderBackend } from '../backend/order-backend.js';
+import type { RefundLedger } from '../refund-ledger/index.js';
 
 const unreachableBackend: OrderBackend = {
   findOrder: () => {
@@ -17,11 +18,28 @@ const unreachableBackend: OrderBackend = {
   },
 };
 
+const unreachableLedger: RefundLedger = {
+  recordRefund: () => {
+    throw new Error('wire-format translation must never execute tools');
+  },
+  settleRefundRecord: () => {
+    throw new Error('wire-format translation must never execute tools');
+  },
+  updateRefundRecordStatus: () => {
+    throw new Error('wire-format translation must never execute tools');
+  },
+  list: () => {
+    throw new Error('wire-format translation must never execute tools');
+  },
+};
+
 describe('toModelToolRegistry', () => {
-  const definitions = toModelToolRegistry(createToolRegistry(unreachableBackend));
+  const definitions = toModelToolRegistry(
+    createToolRegistry(unreachableBackend, unreachableLedger),
+  );
 
   it('emits one definition per registry entry, named by its key', () => {
-    expect(definitions.map((d) => d.name)).toEqual(['lookup_order']);
+    expect(definitions.map((d) => d.name)).toEqual(['lookup_order', 'issue_refund']);
   });
 
   it('passes the description through', () => {
@@ -33,6 +51,18 @@ describe('toModelToolRegistry', () => {
       type: 'object',
       properties: { orderId: { type: 'string' } },
       required: ['orderId'],
+    });
+  });
+
+  it('renders the refund schema with its three required fields', () => {
+    expect(definitions[1]!.inputSchema).toMatchObject({
+      type: 'object',
+      properties: {
+        orderId: { type: 'string' },
+        orderItemId: { type: 'string' },
+        quantity: { type: 'number' },
+      },
+      required: ['orderId', 'orderItemId', 'quantity'],
     });
   });
 
