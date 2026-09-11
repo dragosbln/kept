@@ -191,6 +191,7 @@ export async function createAgentService(config: AgentServiceConfig): Promise<Ag
           message,
           modelClient,
           tools: registry,
+          conversationId: conversation.id,
           trace,
         });
 

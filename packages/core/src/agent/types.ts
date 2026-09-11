@@ -11,6 +11,9 @@ export type ExecuteToolParams<TSchema extends z.ZodType> = {
   input: unknown;
   callId: string;
   timeoutMs?: number;
+  // Context the tool receives as-is; see ToolExecuteContext for what each is for.
+  conversationId: string;
+  promptHash: string;
 };
 
 /** A tool call as the model requested it, addressed by name into a registry. */
@@ -18,6 +21,9 @@ export type ExecuteToolCallArgs = {
   callId: string;
   name: string;
   args: ToolArgs;
+  // Context the tool receives as-is; see ToolExecuteContext for what each is for.
+  conversationId: string;
+  promptHash: string;
 };
 
 /**
@@ -57,6 +63,13 @@ export type RunTurnParams = {
   modelClient: ModelClient;
   tools: ToolRegistry;
   trace: Trace;
+  /**
+   * Identity of the conversation, passed through to every tool of the turn
+   * (see ToolExecuteContext.conversationId). Explicit rather than read off
+   * the trace's sessionId: the loop should not depend on how the host
+   * chooses to name traces.
+   */
+  conversationId: string;
   limits?: Partial<TurnLimits>;
   logger?: TurnLogger;
 };

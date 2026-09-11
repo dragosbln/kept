@@ -44,6 +44,8 @@ export async function executeTool<TSchema extends z.ZodType>({
   tool: { inputSchema, execute },
   input,
   callId,
+  conversationId,
+  promptHash,
   timeoutMs = DEFAULT_TOOL_TIMEOUT_MS,
 }: ExecuteToolParams<TSchema>): Promise<ToolResult> {
   const parsed = inputSchema.safeParse(input);
@@ -59,7 +61,12 @@ export async function executeTool<TSchema extends z.ZodType>({
   const timeout = createTimeout(timeoutMs);
 
   try {
-    const executePromise = execute(parsed.data, { callId, signal: timeout.signal });
+    const executePromise = execute(parsed.data, {
+      callId,
+      signal: timeout.signal,
+      conversationId,
+      promptHash,
+    });
 
     // A rejection that lands after the race has settled (a tool failing late,
     // after its timeout) must not surface as an unhandled rejection.
@@ -92,7 +99,7 @@ export async function executeTool<TSchema extends z.ZodType>({
 
 export async function executeToolCall(
   registry: ToolRegistry,
-  { callId, name, args }: ExecuteToolCallArgs,
+  { callId, name, args, conversationId, promptHash }: ExecuteToolCallArgs,
   timeoutMs = DEFAULT_TOOL_TIMEOUT_MS,
 ): Promise<SettledToolCall> {
   if (!isRegisteredTool(registry, name)) {
@@ -104,7 +111,14 @@ export async function executeToolCall(
     };
   }
 
-  const result = await executeTool({ tool: registry[name], input: args, callId, timeoutMs });
+  const result = await executeTool({
+    tool: registry[name],
+    input: args,
+    callId,
+    timeoutMs,
+    conversationId,
+    promptHash,
+  });
 
   return { callId, ...result };
 }

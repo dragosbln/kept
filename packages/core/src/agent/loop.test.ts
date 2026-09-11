@@ -97,7 +97,7 @@ type RunReturnType = {
   promise: Promise<RunTurnResult>;
 };
 
-type RunOverrides = Partial<Pick<RunTurnParams, 'limits' | 'tools' | 'logger'>>;
+type RunOverrides = Partial<Pick<RunTurnParams, 'limits' | 'tools' | 'logger' | 'conversationId'>>;
 
 function run(script: CallModelResponse[], overrides: RunOverrides = {}): RunReturnType {
   const trace = new Trace(traceConfig);
@@ -108,6 +108,7 @@ function run(script: CallModelResponse[], overrides: RunOverrides = {}): RunRetu
     modelClient,
     tools: registry,
     trace,
+    conversationId: traceConfig.sessionId,
     ...overrides,
   });
   return { trace, modelClient, promise };
@@ -197,6 +198,50 @@ describe('runTurn', () => {
       resultState: 'ok',
       parentId: completed.spans[0]!.id, // contained by the turn, not the model call
     });
+  });
+
+  it('hands every tool the conversation id it was given and the prompt hash from the model config', async () => {
+    // A distinctive id on purpose: a literal in the loop that happens to equal
+    // the fixture's default would pass every other test in this file.
+    const seen: { callId: string; conversationId: string; promptHash: string }[] = [];
+    const spying: ToolRegistry = {
+      lookup_order: defineTool({
+        description: 'spy',
+        inputSchema: z.object({ orderId: z.string() }),
+        execute: async (_input, ctx) => {
+          seen.push({
+            callId: ctx.callId,
+            conversationId: ctx.conversationId,
+            promptHash: ctx.promptHash,
+          });
+          return { resultState: 'ok', result: null, response: 'seen' };
+        },
+      }),
+    };
+
+    await run(
+      [
+        toolUse([
+          { id: 'call-1', name: 'lookup_order', args: { orderId: 'order-1001' } },
+          { id: 'call-2', name: 'lookup_order', args: { orderId: 'order-1002' } },
+        ]),
+        endTurn('Both looked up.'),
+      ],
+      { tools: spying, conversationId: 'conv-threading-9f2' },
+    ).promise;
+
+    expect(seen).toEqual([
+      {
+        callId: 'call-1',
+        conversationId: 'conv-threading-9f2',
+        promptHash: fakeConfig.promptData.hash,
+      },
+      {
+        callId: 'call-2',
+        conversationId: 'conv-threading-9f2',
+        promptHash: fakeConfig.promptData.hash,
+      },
+    ]);
   });
 
   it('parallel tools: all results land in a single user message, one span per call', async () => {
@@ -415,6 +460,7 @@ describe('runTurn', () => {
       message: 'Where is my order?',
       modelClient,
       tools: registry,
+      conversationId: traceConfig.sessionId,
       trace,
     });
 
@@ -437,6 +483,7 @@ describe('runTurn', () => {
       message: 'Where is my order?',
       modelClient: throwingClient,
       tools: registry,
+      conversationId: traceConfig.sessionId,
       trace,
       logger,
     });

@@ -18,6 +18,16 @@ export type ToolExecuteContext = {
    * it no longer knows.
    */
   signal: AbortSignal;
+  /**
+   * The conversation this call belongs to: the identity a write tool stamps
+   * on its ledger record. Carried by the loop untouched from the host.
+   */
+  conversationId: string;
+  /**
+   * Hash of the prompt the model was running when it asked for this call,
+   * taken from the model config, so a record can say which prompt decided it.
+   */
+  promptHash: string;
 };
 
 export type ToolDefinition<TSchema extends z.ZodType> = {

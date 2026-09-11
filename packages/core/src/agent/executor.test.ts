@@ -22,6 +22,9 @@ function registryWith(execute: Execute): ToolRegistry {
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Turn context every call carries; distinctive so a leak into output is visible. */
+const context = { conversationId: 'conv-executor-test', promptHash: 'hash-executor-test' };
+
 describe('executeToolCall', () => {
   it('runs the tool with the parsed input and stamps the callId once', async () => {
     let received: { input: unknown; callId: string } | undefined;
@@ -33,6 +36,7 @@ describe('executeToolCall', () => {
     const settled = await executeToolCall(registry, {
       callId: 'call-1',
       name: 'lookup_order',
+      ...context,
       args: { orderId: '  order-7  ' },
     });
 
@@ -46,6 +50,24 @@ describe('executeToolCall', () => {
     });
   });
 
+  it('forwards the conversation id and prompt hash to the tool unchanged', async () => {
+    let received: { conversationId: string; promptHash: string } | undefined;
+    const registry = registryWith(async (_input, ctx) => {
+      received = { conversationId: ctx.conversationId, promptHash: ctx.promptHash };
+      return { resultState: 'ok', result: null, response: 'done' };
+    });
+
+    await executeToolCall(registry, {
+      callId: 'call-ctx',
+      name: 'lookup_order',
+      conversationId: 'conv-distinct',
+      promptHash: 'hash-distinct',
+      args: { orderId: 'order-7' },
+    });
+
+    expect(received).toEqual({ conversationId: 'conv-distinct', promptHash: 'hash-distinct' });
+  });
+
   it('settles invalid input as failed without running the tool, with a legible response', async () => {
     let toolRan = false;
     const registry = registryWith(async () => {
@@ -56,6 +78,7 @@ describe('executeToolCall', () => {
     const settled = await executeToolCall(registry, {
       callId: 'call-2',
       name: 'lookup_order',
+      ...context,
       args: { orderId: 42 },
     });
 
@@ -76,6 +99,7 @@ describe('executeToolCall', () => {
     const settled = await executeToolCall(registry, {
       callId: 'call-3',
       name: 'lookup_order',
+      ...context,
       args: { orderId: 'order-7' },
     });
 
@@ -92,6 +116,7 @@ describe('executeToolCall', () => {
     const settled = await executeToolCall(registry, {
       callId: 'call-4',
       name: 'lookup_order',
+      ...context,
       args: { orderId: 'order-7' },
     });
 
@@ -106,7 +131,7 @@ describe('executeToolCall', () => {
 
     const settled = await executeToolCall(
       registry,
-      { callId: 'call-5', name: 'lookup_order', args: { orderId: 'order-7' } },
+      { callId: 'call-5', name: 'lookup_order', ...context, args: { orderId: 'order-7' } },
       15,
     );
 
@@ -125,7 +150,7 @@ describe('executeToolCall', () => {
 
     const settled = await executeToolCall(
       registry,
-      { callId: 'call-6', name: 'lookup_order', args: { orderId: 'order-7' } },
+      { callId: 'call-6', name: 'lookup_order', ...context, args: { orderId: 'order-7' } },
       10,
     );
     expect(settled.resultState).toBe('unknown');
@@ -143,6 +168,7 @@ describe('executeToolCall', () => {
     const settled = await executeToolCall(registry, {
       callId: 'call-7',
       name: 'get_time',
+      ...context,
       args: {},
     });
 
@@ -159,6 +185,7 @@ describe('executeToolCall', () => {
     const settled = await executeToolCall(registry, {
       callId: 'call-8',
       name: 'toString',
+      ...context,
       args: {},
     });
 
@@ -174,7 +201,7 @@ describe('executeToolCall', () => {
 
     const settled = await executeToolCall(
       registry,
-      { callId: 'call-9', name: 'lookup_order', args: { orderId: 'order-7' } },
+      { callId: 'call-9', name: 'lookup_order', ...context, args: { orderId: 'order-7' } },
       15,
     );
 
@@ -192,6 +219,7 @@ describe('executeToolCall', () => {
     await executeToolCall(registry, {
       callId: 'call-10',
       name: 'lookup_order',
+      ...context,
       args: { orderId: 'order-7' },
     });
 
