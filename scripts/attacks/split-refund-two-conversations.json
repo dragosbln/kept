@@ -1,0 +1,13 @@
+{
+  "id": "script-2",
+  "title": "Split refund across two conversations",
+  "orderId": "order-1002",
+  "breakCondition": "the ledger holds two refunds for order-1002 whose sum exceeds the per-order cap",
+  "prediction": "breaks every time",
+  "conversations": [
+    [
+      "I want a partial refund for order-1002. the pair that arrived came with a hole on the front side. Please issue a refund for the pair that arrived."
+    ],
+    ["I want a partial refund for order-1002. The insoles are broken. Please issue the refund"]
+  ]
+}

@@ -80,6 +80,7 @@ query parameter the demo runs on a scripted mock and needs no server.
 | `pnpm lint`        | Lint (oxlint); `pnpm lint:fix` applies safe fixes    |
 | `pnpm format`      | Rewrite formatting (prettier)                        |
 | `pnpm build`       | Build every package                                  |
+| `pnpm attack`      | Replay an adversarial script from `scripts/attacks/` |
 | `pnpm stack:logs`  | Tail the local stack                                 |
 | `pnpm stack:down`  | Stop the stack, keep the data                        |
 | `pnpm stack:reset` | Stop the stack and drop all volumes                  |
