@@ -13,3 +13,4 @@ export * from './backend/index.js';
 export * from './refund-ledger/index.js';
 export * from './model/index.js';
 export * from './agent/index.js';
+export * from './policy/index.js';

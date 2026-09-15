@@ -49,3 +49,27 @@ export type RecordRefundParams = Pick<
   | 'currency'
   | 'requireApproval'
 >;
+
+/**
+ * The vocabulary of a ledger read. Owned here because the ledger decides
+ * what a query can say; the policy engine builds queries from it (engine ->
+ * ledger, never the reverse). Every query is implicitly restricted to
+ * counting records (see RefundLedgerRecord.status) in one currency.
+ */
+export type LedgerScope =
+  | { kind: 'none' } // per_call: nothing prior counts
+  | { kind: 'all' } // per_day: every counting record
+  | { kind: 'customerKey'; value: CustomerKey } // per_customer
+  | { kind: 'orderId'; value: string } // per_order
+  | { kind: 'orderLine'; orderId: string; orderItemId: string }; // what is reserved or refunded on one line
+
+export type LedgerQuery = {
+  scope: LedgerScope;
+  currency: Currency;
+  /**
+   * Trailing-window floor, epoch ms, computed on the caller's clock so the
+   * value the ledger compared against is the value recorded on the decision.
+   * Absent means no window. A record created exactly at sinceMs is inside.
+   */
+  sinceMs?: number;
+};
