@@ -9,6 +9,8 @@ import { z } from 'zod';
 import { executeToolCall } from './executor.js';
 import { defineTool } from '../tools/utils.js';
 import type { ToolRegistry } from '../tools/types.js';
+import { Trace } from '../tracing/trace.js';
+import type { StartPolicyDecisionPayload } from '../tracing/types.js';
 
 const schema = z.object({ orderId: z.string().trim() });
 
@@ -33,7 +35,21 @@ function registryWith(execute: Execute): ToolRegistry {
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Turn context every call carries; distinctive so a leak into output is visible. */
-const context = { conversationId: 'conv-executor-test', promptHash: 'hash-executor-test' };
+const scratchTrace = (): Trace =>
+  new Trace({
+    sessionId: 'scratch',
+    providerName: 'anthropic',
+    promptName: 'main-agent',
+    promptVersion: '0',
+    promptHash: 'scratch',
+    backendKind: 'demo',
+  });
+const context = {
+  conversationId: 'conv-executor-test',
+  promptHash: 'hash-executor-test',
+  startPolicyDecisionSpan: (payload: StartPolicyDecisionPayload) =>
+    scratchTrace().startPolicyDecisionSpan(null, payload),
+};
 
 describe('executeToolCall', () => {
   it('runs the tool with the parsed input and stamps the callId once', async () => {
@@ -72,6 +88,7 @@ describe('executeToolCall', () => {
       name: 'lookup_order',
       conversationId: 'conv-distinct',
       promptHash: 'hash-distinct',
+      startPolicyDecisionSpan: context.startPolicyDecisionSpan,
       args: { orderId: 'order-7' },
     });
 

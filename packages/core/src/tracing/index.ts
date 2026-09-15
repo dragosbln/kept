@@ -8,16 +8,26 @@
 // sweep.
 
 export { Trace } from './trace.js';
-export type { AnySpan, ModelCallSpan, SpanBase, ToolExecutionSpan, TurnSpan } from './span.js';
+export type {
+  AnySpan,
+  ModelCallSpan,
+  PolicyDecisionSpan,
+  SpanBase,
+  ToolExecutionSpan,
+  TurnSpan,
+} from './span.js';
 export type {
   BackendKind,
   CompletedSpanPayload,
   CompletedTrace,
   EndModelCallPayload,
+  EndPolicyDecisionPayload,
   EndToolExecutionPayload,
   EndTurnPayload,
   ModelCallPayload,
   ModelCallSpanPayload,
+  PolicyDecisionPayload,
+  PolicyDecisionSpanPayload,
   SettledSpanStatus,
   SpanKind,
   SpanKindPayload,
@@ -25,6 +35,7 @@ export type {
   SpanPayloadBase,
   SpanStatus,
   StartModelCallPayload,
+  StartPolicyDecisionPayload,
   StartToolExecutionPayload,
   StartTurnPayload,
   ToolExecutionPayload,
@@ -41,4 +52,9 @@ export { LangfuseExporter } from './export/langfuse.js';
 export type { ExportErrorEvent, LangfuseExporterConfig } from './export/langfuse.js';
 export { mapTraceToOTLPEnvelope } from './export/otlp.js';
 export type { OtlpAttribute, OtlpEnvelope, OtlpSpan } from './export/otlp.js';
-export { langfuseAttributes, otelAttributes, semConvCommitSha } from './export/otel-attributes.js';
+export {
+  keptAttributes,
+  langfuseAttributes,
+  otelAttributes,
+  semConvCommitSha,
+} from './export/otel-attributes.js';

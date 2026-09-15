@@ -2,15 +2,19 @@ import type { ErrorType } from '../messages.js';
 import type {
   CompletedSpanPayload,
   EndModelCallPayload,
+  EndPolicyDecisionPayload,
   EndToolExecutionPayload,
   EndTurnPayload,
   ModelCallPayload,
   ModelCallSpanPayload,
+  PolicyDecisionPayload,
+  PolicyDecisionSpanPayload,
   SettledSpanStatus,
   SpanPayload,
   SpanPayloadBase,
   SpanStatus,
   StartModelCallPayload,
+  StartPolicyDecisionPayload,
   StartToolExecutionPayload,
   StartTurnPayload,
   ToolExecutionPayload,
@@ -148,5 +152,25 @@ export class TurnSpan extends SpanBase<TurnPayload, StartTurnPayload, EndTurnPay
   }
 }
 
+/**
+ * A tool's consultation of the policy engine: opened before the ledger's
+ * atomic operation, ended with its decision, so the duration covers the
+ * read, the decision and the write. error() is for a consultation that never
+ * produced a decision, a throw between open and end.
+ */
+export class PolicyDecisionSpan extends SpanBase<
+  PolicyDecisionPayload,
+  StartPolicyDecisionPayload,
+  EndPolicyDecisionPayload
+> {
+  snapshot(): PolicyDecisionSpanPayload {
+    return {
+      kind: 'policy_decision',
+      ...this.basePayload,
+      ...this.payload,
+    };
+  }
+}
+
 /** Any span handle a Trace can hold — the closed set matching SpanKindPayload. */
-export type AnySpan = ModelCallSpan | ToolExecutionSpan | TurnSpan;
+export type AnySpan = ModelCallSpan | ToolExecutionSpan | TurnSpan | PolicyDecisionSpan;

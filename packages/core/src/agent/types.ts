@@ -1,5 +1,10 @@
 import type { z } from 'zod';
-import type { ToolDefinition, ToolRegistry, ToolResult } from '../tools/types.js';
+import type {
+  ToolDefinition,
+  ToolExecuteContext,
+  ToolRegistry,
+  ToolResult,
+} from '../tools/types.js';
 import type { ModelClient } from '../model/client.js';
 import type { Trace } from '../tracing/trace.js';
 import type { Message, ToolArgs } from '../messages.js';
@@ -14,6 +19,7 @@ export type ExecuteToolParams<TSchema extends z.ZodType> = {
   // Context the tool receives as-is; see ToolExecuteContext for what each is for.
   conversationId: string;
   promptHash: string;
+  startPolicyDecisionSpan: ToolExecuteContext['startPolicyDecisionSpan'];
 };
 
 /** A tool call as the model requested it, addressed by name into a registry. */
@@ -24,6 +30,7 @@ export type ExecuteToolCallArgs = {
   // Context the tool receives as-is; see ToolExecuteContext for what each is for.
   conversationId: string;
   promptHash: string;
+  startPolicyDecisionSpan: ToolExecuteContext['startPolicyDecisionSpan'];
 };
 
 /**

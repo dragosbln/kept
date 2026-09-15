@@ -18,7 +18,8 @@ import { defineTool } from '../tools/utils.js';
 import type { ToolRegistry } from '../tools/types.js';
 import { DemoBackend } from '../backend/demo.js';
 import { makeDemoOrders } from '../backend/seed-orders.js';
-import { InMemoryRefundLedger } from '../refund-ledger/index.js';
+import { InMemoryRefundLedger, customerKeyFor } from '../refund-ledger/index.js';
+import type { PolicyRequest } from '../policy/types.js';
 import type { ModelClient } from '../model/client.js';
 import type { CallModelResponse, ModelClientConfig } from '../model/types.js';
 import type { Message, ToolArgs } from '../messages.js';
@@ -244,6 +245,59 @@ describe('runTurn', () => {
         promptHash: fakeConfig.promptData.hash,
       },
     ]);
+  });
+
+  it('gives every tool a policy_decision span starter parented by its own tool span', async () => {
+    const request: PolicyRequest = {
+      action: 'issue_refund',
+      customerKey: customerKeyFor({ email: 'sam@example.com' }),
+      orderId: 'order-1002',
+      orderItemId: 'order-1002-line-1',
+      quantity: 1,
+      currency: 'USD',
+      amountMinorUnits: 8900,
+    };
+    const consulting: ToolRegistry = {
+      lookup_order: defineTool({
+        description: 'consults the engine',
+        inputSchema: z.object({ orderId: z.string() }),
+        execute: async (_input, ctx) => {
+          const span = ctx.startPolicyDecisionSpan({ configHash: 'cfg-loop', request });
+          span.end({
+            outcome: 'allow',
+            decision: { configHash: 'cfg-loop', request, eligibility: [], perCap: [] },
+          });
+          return { resultState: 'ok', result: null, response: 'decided' };
+        },
+      }),
+      issue_refund: registry.issue_refund,
+    };
+
+    const { trace, promise } = run(
+      [
+        toolUse([{ id: 'call-1', name: 'lookup_order', args: { orderId: 'order-1001' } }]),
+        endTurn('Done.'),
+      ],
+      { tools: consulting },
+    );
+    await promise;
+
+    const completed = trace.end();
+    expect(spanKinds(completed)).toEqual([
+      'turn',
+      'model_call',
+      'tool_execution',
+      'policy_decision',
+      'model_call',
+    ]);
+    expectAllSpansSettled(completed);
+    const toolSpan = completed.spans.find((span) => span.kind === 'tool_execution')!;
+    expect(completed.spans.find((span) => span.kind === 'policy_decision')).toMatchObject({
+      parentId: toolSpan.id,
+      status: 'completed',
+      outcome: 'allow',
+      configHash: 'cfg-loop',
+    });
   });
 
   it('parallel tools: all results land in a single user message, one span per call', async () => {

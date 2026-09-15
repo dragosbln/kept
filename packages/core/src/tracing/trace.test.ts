@@ -9,6 +9,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Trace } from './trace.js';
 import { mapTraceToOTLPEnvelope } from './export/otlp.js';
 import type { StartModelCallPayload, TraceConfig } from './types.js';
+import type { OtlpSpan } from './export/otlp.js';
+import { customerKeyFor } from '../refund-ledger/customer-key.js';
+import type { DecisionRecord, PolicyRequest } from '../policy/types.js';
 
 const traceConfig: TraceConfig = {
   sessionId: 'session-1',
@@ -73,6 +76,57 @@ function recordConversationWithAbandonedTool(): Trace {
   return trace;
 }
 
+const policyRequest: PolicyRequest = {
+  action: 'issue_refund',
+  customerKey: customerKeyFor({ email: 'sam@example.com' }),
+  orderId: 'order-1002',
+  orderItemId: 'order-1002-line-2',
+  quantity: 1,
+  currency: 'USD',
+  amountMinorUnits: 1200,
+};
+
+/** The split-refund verdict: the insoles trip the per-order cap behind the boots. */
+const decisionRecord: DecisionRecord = {
+  configHash: 'cfg-1',
+  request: policyRequest,
+  eligibility: [{ ruleKind: 'item_not_delivered', passed: true }],
+  perCap: [
+    {
+      kind: 'per_order',
+      currency: 'USD',
+      capAmountMinorUnits: 10_000,
+      consumedAmountMinorUnits: 8900,
+      requestedAmountMinorUnits: 1200,
+      remainingBeforeMinorUnits: 1100,
+      outcome: 'require_approval',
+      contributingRecordIds: ['rec-boots'],
+    },
+  ],
+};
+
+/** A refund turn: the tool consults the engine and the request lands in the queue. */
+function recordOneDecision(config: TraceConfig = traceConfig): Trace {
+  const trace = new Trace(config);
+  const turn = trace.startTurnSpan(null, { customerInput: 'Refund the insoles.' });
+  const tool = trace.startToolExecutionSpan(turn.id, {
+    callId: 'call_2',
+    toolName: 'issue_refund',
+    args: { orderId: 'order-1002', orderItemId: 'order-1002-line-2', quantity: 1 },
+  });
+  const decision = trace.startPolicyDecisionSpan(tool.id, {
+    configHash: 'cfg-1',
+    request: policyRequest,
+  });
+  decision.end({ outcome: 'require_approval', reason: 'cap_exceeded', decision: decisionRecord });
+  tool.end({ resultState: 'ok', result: { status: 'pending' } });
+  turn.end({ outcome: { type: 'reply', message: 'A person will review it.' } });
+  return trace;
+}
+
+const attr = (span: OtlpSpan, key: string): string | undefined =>
+  span.attributes.find((a) => a.key === key)?.value.stringValue;
+
 describe('Trace recorder', () => {
   it('collects all spans in start order with durations stamped', () => {
     const completed = recordOneConversation().end();
@@ -98,6 +152,48 @@ describe('Trace recorder', () => {
       vi.stubEnv('NODE_ENV', 'production');
       const completed = recordConversationWithAbandonedTool().end();
       expect(completed.spans.map((s) => s.status)).toEqual(['completed', 'undetermined']);
+    });
+  });
+
+  describe('policy_decision spans', () => {
+    it('records the consultation under the tool span, start fields beside the end fields', () => {
+      const completed = recordOneDecision().end();
+      expect(completed.spans.map((s) => s.kind)).toEqual([
+        'turn',
+        'tool_execution',
+        'policy_decision',
+      ]);
+      const tool = completed.spans[1]!;
+      expect(completed.spans[2]).toMatchObject({
+        kind: 'policy_decision',
+        parentId: tool.id,
+        status: 'completed',
+        configHash: 'cfg-1',
+        request: policyRequest,
+        outcome: 'require_approval',
+        reason: 'cap_exceeded',
+        decision: decisionRecord,
+      });
+    });
+
+    it('a consultation that errors keeps its config and request', () => {
+      const trace = new Trace(traceConfig);
+      const turn = trace.startTurnSpan(null, { customerInput: 'refund' });
+      const decision = trace.startPolicyDecisionSpan(turn.id, {
+        configHash: 'cfg-1',
+        request: policyRequest,
+      });
+      decision.error('decision_failed');
+      turn.end({ outcome: { type: 'failed', reason: 'internal' } });
+      const span = trace.end().spans[1];
+      expect(span).toMatchObject({
+        kind: 'policy_decision',
+        status: 'error',
+        errorType: 'decision_failed',
+        configHash: 'cfg-1',
+        request: policyRequest,
+      });
+      expect(span).not.toHaveProperty('outcome');
     });
   });
 
@@ -170,6 +266,44 @@ describe('OTLP mapper', () => {
     const children = spans.filter((s) => s.name !== 'turn');
     for (const child of children) {
       expect(child.parentSpanId).toBe(turn.spanId);
+    }
+  });
+
+  it('emits the policy decision as kept.* attributes and Langfuse panes, under the tool span', () => {
+    const decided = mapTraceToOTLPEnvelope(recordOneDecision().end()).resourceSpans[0]!
+      .scopeSpans[0]!.spans;
+    const tool = decided.find((s) => s.name === 'tool_execution')!;
+    const decision = decided.find((s) => s.name === 'policy_decision')!;
+
+    expect(decision.parentSpanId).toBe(tool.spanId);
+    expect(decision.status.code).toBe(1);
+    expect(attr(decision, 'kept.policy.action')).toBe('issue_refund');
+    expect(attr(decision, 'kept.policy.outcome')).toBe('require_approval');
+    expect(attr(decision, 'kept.policy.reason')).toBe('cap_exceeded');
+    expect(attr(decision, 'kept.policy.config_hash')).toBe('cfg-1');
+    expect(JSON.parse(attr(decision, 'kept.policy.request')!)).toEqual(policyRequest);
+    expect(JSON.parse(attr(decision, 'kept.policy.decision')!)).toEqual(decisionRecord);
+    expect(JSON.parse(attr(decision, 'langfuse.observation.input')!)).toEqual(policyRequest);
+    expect(JSON.parse(attr(decision, 'langfuse.observation.output')!)).toEqual({
+      outcome: 'require_approval',
+      reason: 'cap_exceeded',
+      decision: decisionRecord,
+    });
+    expect(attr(decision, 'langfuse.observation.metadata.outcomeType')).toBe('require_approval');
+    expect(attr(decision, 'langfuse.observation.metadata.outcomeReason')).toBe('cap_exceeded');
+    expect(attr(decision, 'gen_ai.operation.name')).toBeUndefined();
+  });
+
+  it('stamps the policy config hash on every span only when the trace carries one', () => {
+    const key = 'langfuse.trace.metadata.policyConfigHash';
+    const stamped = mapTraceToOTLPEnvelope(
+      recordOneDecision({ ...traceConfig, policyConfigHash: 'cfg-1' }).end(),
+    ).resourceSpans[0]!.scopeSpans[0]!.spans;
+    for (const span of stamped) {
+      expect(attr(span, key)).toBe('cfg-1');
+    }
+    for (const span of spans) {
+      expect(span.attributes.map((a) => a.key)).not.toContain(key);
     }
   });
 

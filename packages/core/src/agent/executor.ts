@@ -46,6 +46,7 @@ export async function executeTool<TSchema extends z.ZodType>({
   callId,
   conversationId,
   promptHash,
+  startPolicyDecisionSpan,
   timeoutMs = DEFAULT_TOOL_TIMEOUT_MS,
 }: ExecuteToolParams<TSchema>): Promise<ToolResult> {
   const parsed = inputSchema.safeParse(input);
@@ -66,6 +67,7 @@ export async function executeTool<TSchema extends z.ZodType>({
       signal: timeout.signal,
       conversationId,
       promptHash,
+      startPolicyDecisionSpan,
     });
 
     // A rejection that lands after the race has settled (a tool failing late,
@@ -99,7 +101,7 @@ export async function executeTool<TSchema extends z.ZodType>({
 
 export async function executeToolCall(
   registry: ToolRegistry,
-  { callId, name, args, conversationId, promptHash }: ExecuteToolCallArgs,
+  { callId, name, args, conversationId, promptHash, startPolicyDecisionSpan }: ExecuteToolCallArgs,
   timeoutMs = DEFAULT_TOOL_TIMEOUT_MS,
 ): Promise<SettledToolCall> {
   if (!isRegisteredTool(registry, name)) {
@@ -118,6 +120,7 @@ export async function executeToolCall(
     timeoutMs,
     conversationId,
     promptHash,
+    startPolicyDecisionSpan,
   });
 
   return { callId, ...result };

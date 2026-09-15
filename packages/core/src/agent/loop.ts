@@ -288,6 +288,8 @@ async function tracedToolCall(part: ToolCallPart, ctx: LoopContext): Promise<Set
       args: part.args,
       promptHash: ctx.modelConfig.promptData.hash,
       conversationId: ctx.conversationId,
+      // Decision spans nest under this call's span, not under the turn.
+      startPolicyDecisionSpan: (payload) => ctx.trace.startPolicyDecisionSpan(span.id, payload),
     },
     ctx.limits.toolTimeoutMs,
   );

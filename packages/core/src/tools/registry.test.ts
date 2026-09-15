@@ -12,6 +12,7 @@ import type { OrderBackend } from '../backend/order-backend.js';
 import { makeDemoOrders } from '../backend/seed-orders.js';
 import { DemoBackend } from '../backend/demo.js';
 import { executeToolCall } from '../agent/executor.js';
+import { Trace } from '../tracing/trace.js';
 import {
   InMemoryRefundLedger,
   LedgerError,
@@ -46,11 +47,23 @@ function fakeBackend(stock: Order[]): FakeBackendReturnType {
   return { backend, ledger: new InMemoryRefundLedger(), requestedIds };
 }
 
+/** Hand-built contexts get decision spans on a throwaway trace: the tool needs a handle, these tests do not read it. */
+const scratchTrace = (): Trace =>
+  new Trace({
+    sessionId: 'scratch',
+    providerName: 'anthropic',
+    promptName: 'main-agent',
+    promptVersion: '0',
+    promptHash: 'scratch',
+    backendKind: 'demo',
+  });
+
 const ctx: ToolExecuteContext = {
   callId: 'call_1',
   conversationId: 'conv-registry-test',
   promptHash: 'hash-registry-test',
   signal: new AbortController().signal,
+  startPolicyDecisionSpan: (payload) => scratchTrace().startPolicyDecisionSpan(null, payload),
 };
 
 describe('lookup_order', () => {
@@ -312,6 +325,7 @@ describe('issue_refund', () => {
       name: 'issue_refund',
       conversationId: ctx.conversationId,
       promptHash: ctx.promptHash,
+      startPolicyDecisionSpan: ctx.startPolicyDecisionSpan,
       args,
     });
 

@@ -5,7 +5,7 @@
 
 import type { Message, MessageRole, ToolArgs } from '../../messages.js';
 import type { CompletedSpanPayload, CompletedTrace, SpanKind, TurnSpanPayload } from '../types.js';
-import { langfuseAttributes, otelAttributes } from './otel-attributes.js';
+import { keptAttributes, langfuseAttributes, otelAttributes } from './otel-attributes.js';
 
 const SERVICE_NAME = 'kept-agent';
 const INSTRUMENTATION_SCOPE = 'kept-tracing';
@@ -58,6 +58,8 @@ function mapOperationName(spanKind: SpanKind): 'chat' | 'execute_tool' | null {
     case 'tool_execution':
       return 'execute_tool';
     case 'turn':
+    case 'policy_decision':
+      // No GenAI operation covers either; the span name carries the kind.
       return null;
     default:
       spanKind satisfies never;
@@ -180,6 +182,7 @@ function mapSpanAttributes(trace: CompletedTrace, span: CompletedSpanPayload): O
     str(langfuseAttributes.faultToggles, JSON.stringify(trace.faultToggles)),
     str(langfuseAttributes.backendKind, trace.backendKind),
     str(langfuseAttributes.promptHash, trace.promptHash),
+    str(langfuseAttributes.policyConfigHash, trace.policyConfigHash),
     str(otelAttributes.sessionId, trace.sessionId),
     str(otelAttributes.errorType, span.errorType),
   ];
@@ -235,6 +238,32 @@ function mapSpanAttributes(trace: CompletedTrace, span: CompletedSpanPayload): O
         str(otelAttributes.toolResult, result),
         str(langfuseAttributes.output, result),
         str(langfuseAttributes.resultState, span.resultState),
+      ];
+    }
+    case 'policy_decision': {
+      // The request is the input pane; the verdict with its record is the
+      // output pane. kept.* carries the same facts for any other consumer,
+      // with the decision record kept pure of the span-level outcome.
+      const request = JSON.stringify(span.request);
+      const verdict =
+        span.outcome === undefined
+          ? undefined
+          : JSON.stringify({ outcome: span.outcome, reason: span.reason, decision: span.decision });
+      return [
+        ...attributes,
+        str(keptAttributes.policyAction, span.request.action),
+        str(keptAttributes.policyConfigHash, span.configHash),
+        str(keptAttributes.policyOutcome, span.outcome),
+        str(keptAttributes.policyReason, span.reason),
+        str(keptAttributes.policyRequest, request),
+        str(
+          keptAttributes.policyDecision,
+          span.decision ? JSON.stringify(span.decision) : undefined,
+        ),
+        str(langfuseAttributes.input, request),
+        str(langfuseAttributes.output, verdict),
+        str(langfuseAttributes.outcomeType, span.outcome),
+        str(langfuseAttributes.outcomeReason, span.reason),
       ];
     }
     default:

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import type { ToolResultState } from '../messages.js';
+import type { PolicyDecisionSpan } from '../tracing/span.js';
+import type { StartPolicyDecisionPayload } from '../tracing/types.js';
 
 export type ToolName = 'lookup_order' | 'issue_refund';
 
@@ -28,6 +30,14 @@ export type ToolExecuteContext = {
    * taken from the model config, so a record can say which prompt decided it.
    */
   promptHash: string;
+  /**
+   * Opens a policy_decision span under this call's tool_execution span. A
+   * write tool opens exactly one per consultation of the policy engine,
+   * before the ledger's atomic operation, and ends it on every path. The
+   * loop wires it; a host or test that builds a context by hand supplies
+   * one on a scratch trace.
+   */
+  startPolicyDecisionSpan: (payload: StartPolicyDecisionPayload) => PolicyDecisionSpan;
 };
 
 export type ToolDefinition<TSchema extends z.ZodType> = {
