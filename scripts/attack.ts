@@ -25,6 +25,7 @@ import { configFromEnv, createAgentService } from '../apps/agent/src/handler.ts'
 import type { AgentServiceConfig } from '../apps/agent/src/handler.ts';
 import {
   DemoBackend,
+  COUNTING_STATUSES,
   InMemoryRefundLedger,
   LangfuseExporter,
   formatMoney,
@@ -34,7 +35,6 @@ import type {
   CompletedTrace,
   Currency,
   RefundLedgerRecord,
-  RefundLedgerRecordStatus,
   ToolResultState,
   TraceExporter,
   TurnOutcome,
@@ -180,14 +180,6 @@ type RunRecord = {
   /** Display-only totals of the records that count toward caps, per order and per customer key. */
   sums: { byOrder: Record<string, string>; byCustomer: Record<string, string> };
 };
-
-/** The statuses that count toward caps, as documented on RefundLedgerRecord.status. Display only here. */
-const COUNTING_STATUSES: ReadonlySet<RefundLedgerRecordStatus> = new Set([
-  'pending',
-  'attempted',
-  'ok',
-  'unknown',
-]);
 
 function sumBy(
   records: RefundLedgerRecord[],

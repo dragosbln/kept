@@ -139,8 +139,10 @@ function ledgerBreakingOn(
   error: () => Error,
 ): RefundLedger {
   return {
-    recordRefund: (params) =>
-      method === 'recordRefund' ? Promise.reject(error()) : real.recordRefund(params),
+    recordRefund: (params, queries, decide) =>
+      method === 'recordRefund'
+        ? Promise.reject(error())
+        : real.recordRefund(params, queries, decide),
     settleRefundRecord: (id, response) =>
       method === 'settleRefundRecord'
         ? Promise.reject(error())

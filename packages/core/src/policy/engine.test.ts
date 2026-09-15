@@ -62,8 +62,17 @@ function record(overrides: Partial<RefundLedgerRecord> = {}): RefundLedgerRecord
     amountMinorUnits: 8900,
     currency: 'USD',
     createdAt: NOW - HOUR,
-    requireApproval: false,
     status: 'ok',
+    // The engine reads amounts and ids off a record, never its decision; any decision will do.
+    decisionRecord: {
+      outcome: 'allow',
+      record: {
+        configHash: 'cfg',
+        request: request(),
+        eligibility: [],
+        perCap: [],
+      },
+    },
     ...overrides,
   };
 }

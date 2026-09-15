@@ -77,7 +77,6 @@ export type EligibilityRulesEnabled = { [kind in EligibilityRuleKind]: boolean }
  * type, every sink.
  */
 export type DecisionRecord = {
-  decidedAt: number;
   configHash: string;
   request: PolicyRequest;
   /** Every enabled rule, evaluated; empty only when no rule is enabled. */

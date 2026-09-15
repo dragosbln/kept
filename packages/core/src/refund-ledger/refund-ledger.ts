@@ -10,6 +10,8 @@
 //   OrderBackend.issueRefund is called. A crash between the two leaves an
 //   `attempted` record with no backend fields, which is exactly the
 //   `unknown` situation and is reconciled the same way.
+// - Read, decide, write are one operation (recordRefund): two requests in
+//   the same tool round cannot both pass on the same snapshot.
 // - The lifecycle is the one documented on RefundLedgerRecord.status; settle
 //   and update enforce it and throw on an illegal edge.
 // - Throws only LedgerError, and only on caller bugs (unknown id, illegal
@@ -18,7 +20,14 @@
 //   moved.
 
 import type { IssueRefundResponse } from '../backend/types.js';
-import type { RecordRefundParams, RefundLedgerRecord, RefundLedgerRecordStatus } from './types.js';
+import type { DecisionResult } from '../policy/types.js';
+import type {
+  LedgerQuery,
+  RecordRefundParams,
+  RecordRefundResult,
+  RefundLedgerRecord,
+  RefundLedgerRecordStatus,
+} from './types.js';
 
 /** Why a ledger call was refused. Low-cardinality, like every errorType in the codebase. */
 export type LedgerErrorType = 'record_not_found' | 'illegal_transition';
@@ -39,13 +48,31 @@ export class LedgerError extends Error {
   }
 }
 
+/**
+ * The decision callback recordRefund runs between its read and its write.
+ * Synchronous by signature: the in-memory ledger's atomicity is exactly
+ * "no await between the three", and an async decide would break it without
+ * a compile error anywhere else.
+ */
+export type DecideFn = (results: RefundLedgerRecord[][]) => DecisionResult;
+
 export interface RefundLedger {
   /**
-   * Opens a record: `pending` when approval is required, `attempted` otherwise.
+   * The atomic operation behind every write. Reads the counting records each
+   * query asks for, hands the result lists to `decide` aligned by index, and
+   * opens a record on allow (`attempted`) or require_approval (`pending`).
+   * Deny writes nothing and returns only the decision. A throw from `decide`
+   * propagates before anything is written.
    *
-   * TODO: the loop can run tool uses in parallel, so the policy check and the ledger need to be one operation
+   * A database implementation runs the three steps in one transaction under a
+   * lock; the per_day scope reads every record, so that lock is effectively
+   * global, which is fine at support-desk write rates.
    */
-  recordRefund(params: RecordRefundParams): Promise<RefundLedgerRecord>;
+  recordRefund(
+    params: RecordRefundParams,
+    queries: LedgerQuery[],
+    decide: DecideFn,
+  ): Promise<RecordRefundResult>;
   /**
    * Closes an `attempted` record with what the backend answered. `ok` carries
    * the backend's refund id and the amount it actually moved; `failed` and
@@ -62,8 +89,7 @@ export interface RefundLedger {
   ): Promise<RefundLedgerRecord>;
   /**
    * Every record, in insertion order. The audit views and the attack driver
-   * read it; the policy engine will query by order and by customer once caps
-   * land.
+   * read it; the policy engine reads through recordRefund's queries instead.
    */
   list(): Promise<RefundLedgerRecord[]>;
 }

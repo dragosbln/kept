@@ -114,7 +114,6 @@ export class PolicyEngine {
     }
 
     const { request } = plan;
-    const decidedAt = this.now();
 
     // Partition by entry type first: the line's records feed the gate, the
     // cap records feed the rows. Eligibility is a gate before the caps, not
@@ -141,7 +140,7 @@ export class PolicyEngine {
       quantity: request.quantity,
       lineRecords,
     });
-    const base = { configHash: this.configHash, request, eligibility, decidedAt };
+    const base = { configHash: this.configHash, request, eligibility };
 
     // 1. The gate. Any failure denies and the caps are not evaluated.
     const failures = eligibility.filter((v): v is FailedVerdict => !v.passed);

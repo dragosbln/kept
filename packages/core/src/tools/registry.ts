@@ -73,19 +73,44 @@ export function createToolRegistry(backend: OrderBackend, ledger: RefundLedger):
           };
         }
 
-        // later: policy engen goes here
-
-        const ledgerRecord = await ledger.recordRefund({
-          conversationId: ctx.conversationId,
-          callId: ctx.callId,
-          promptHash: ctx.promptHash,
-          orderId: input.orderId,
-          orderItemId: input.orderItemId,
-          quantity: input.quantity,
-          customerKey: customerKeyFor(order),
-          requireApproval: false,
-          ...refundAmountFor(order, input.orderItemId, input.quantity),
-        });
+        // Step 4 wires the policy engine here. Until then the ledger is asked
+        // with no queries and an unconditional allow, which is what this tool
+        // did before the atomic operation existed.
+        const customerKey = customerKeyFor(order);
+        const amount = refundAmountFor(order, input.orderItemId, input.quantity);
+        const ledgerResult = await ledger.recordRefund(
+          {
+            conversationId: ctx.conversationId,
+            callId: ctx.callId,
+            promptHash: ctx.promptHash,
+            orderId: input.orderId,
+            orderItemId: input.orderItemId,
+            quantity: input.quantity,
+            customerKey,
+            ...amount,
+          },
+          [],
+          () => ({
+            outcome: 'allow',
+            record: {
+              configHash: 'unwired',
+              request: {
+                action: 'issue_refund',
+                customerKey,
+                orderId: input.orderId,
+                orderItemId: input.orderItemId,
+                quantity: input.quantity,
+                ...amount,
+              },
+              eligibility: [],
+              perCap: [],
+            },
+          }),
+        );
+        if (ledgerResult.outcome === 'deny') {
+          throw new Error('ledger wrote no record for an allow decision');
+        }
+        const ledgerRecord = ledgerResult.record;
 
         let backendResponse: IssueRefundResponse | null = null;
 
