@@ -15,6 +15,7 @@ import {
 } from './client.contract.js';
 import { toModelToolRegistry } from './utils.js';
 import { createToolRegistry } from '../tools/registry.js';
+import { DEFAULT_POLICY_CONFIG, PolicyEngine } from '../policy/index.js';
 import type { ModelClientConfig } from './types.js';
 import type { Message } from '../messages.js';
 import type { OrderBackend } from '../backend/order-backend.js';
@@ -54,7 +55,13 @@ const config: ModelClientConfig = {
     hash: 'cafebabe',
     text: 'You are a post-purchase support agent.',
   },
-  toolRegistry: toModelToolRegistry(createToolRegistry(unreachableBackend, unreachableLedger)),
+  toolRegistry: toModelToolRegistry(
+    createToolRegistry(
+      unreachableBackend,
+      unreachableLedger,
+      new PolicyEngine(DEFAULT_POLICY_CONFIG),
+    ),
+  ),
 };
 
 // --- Wire fixtures ----------------------------------------------------------

@@ -7,11 +7,13 @@
 import {
   AnthropicModelClient,
   CodePromptManager,
+  DEFAULT_POLICY_CONFIG,
   DemoBackend,
   InMemoryConversationStore,
   InMemoryRefundLedger,
   LangfuseExporter,
   OpenAIModelClient,
+  PolicyEngine,
   Trace,
   createToolRegistry,
   makeDemoOrders,
@@ -150,6 +152,8 @@ export type AgentService = {
 export type AgentServiceDeps = {
   backend?: OrderBackend;
   ledger?: RefundLedger;
+  /** The attack driver and the eval runner pass an engine with their own config or clock. */
+  policyEngine?: PolicyEngine;
   exporter?: TraceExporter;
 };
 
@@ -165,7 +169,10 @@ export async function createAgentService(
   // One ledger per process, shared by every conversation: per-customer and
   // per-day caps, and the cross-conversation attacks, all depend on that.
   const ledger = deps.ledger ?? new InMemoryRefundLedger();
-  const registry = createToolRegistry(backend, ledger);
+  // One config per process, validated here at boot; its hash is stamped on
+  // every trace and every decision. A config file arrives with the admin.
+  const policyEngine = deps.policyEngine ?? new PolicyEngine(DEFAULT_POLICY_CONFIG);
+  const registry = createToolRegistry(backend, ledger, policyEngine);
   const modelClient = buildModelClient(config, promptData, registry);
   const store = new InMemoryConversationStore();
   const locks = new ConversationLocks();
@@ -202,6 +209,7 @@ export async function createAgentService(
         promptName: promptData.name,
         promptVersion: promptData.version,
         promptHash: promptData.hash,
+        policyConfigHash: policyEngine.configHash,
         backendKind: config.backendKind,
       });
 

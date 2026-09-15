@@ -1,8 +1,47 @@
 import { z } from 'zod';
-import type { ToolDefinition } from './types.js';
+import type { ToolDefinition, ToolResult } from './types.js';
 import type { Currency, IssueRefundResponse, SanitizedOrder } from '../backend/types.js';
 import type { RefundLedgerRecord } from '../refund-ledger/types.js';
 import { formatMoney } from '../backend/utils.js';
+
+/**
+ * Constructors for the three result states, so a tool reads as a list of
+ * settlements rather than object literals. `response` is the model-facing
+ * text, `result` the trace-facing record (null when there is nothing to
+ * record). `unknown` appends the do-not-retry instruction itself: a result
+ * whose side effects are unknown must never invite a second attempt, and
+ * this is the one place that sentence is written.
+ */
+export const settle = {
+  ok: (response: string, result: unknown = null): ToolResult => ({
+    resultState: 'ok',
+    result,
+    response,
+  }),
+  failed: (response: string, result: unknown = null): ToolResult => ({
+    resultState: 'failed',
+    result,
+    response,
+  }),
+  unknown: (response: string, result: unknown = null): ToolResult => ({
+    resultState: 'unknown',
+    result,
+    response: `${response} Do not retry.`,
+  }),
+};
+
+export type ErrorDetail = { errorName?: string; errorMessage: string };
+
+/**
+ * A thrown value as the trace records it: name and message. The object
+ * itself serializes to nothing useful, which is how a stack of `{}` entries
+ * ended up in early traces.
+ */
+export function describeError(error: unknown): ErrorDetail {
+  return error instanceof Error
+    ? { errorName: error.name, errorMessage: error.message }
+    : { errorMessage: String(error) };
+}
 
 export function defineTool<TSchema extends z.ZodType>(
   def: ToolDefinition<TSchema>,

@@ -65,16 +65,17 @@ export type RecordRefundParams = Pick<
   | 'currency'
 >;
 
+/**
+ * What the atomic operation returns: the decision itself, plus the ledger
+ * row it opened when there is one. Deny is the decision result unchanged;
+ * allow and require_approval carry the row under `ledgerRecord`. One
+ * discriminant, `outcome`, narrows everything: the reason, the caps math in
+ * `record`, and whether a row exists. (`record` is the decision record; the
+ * ledger row could not share the name.)
+ */
 export type RecordRefundResult =
-  | {
-      outcome: Extract<DecisionResult['outcome'], 'deny'>;
-      decision: DecisionResult;
-    }
-  | {
-      outcome: Extract<DecisionResult['outcome'], 'allow' | 'require_approval'>;
-      decision: DecisionResult;
-      record: RefundLedgerRecord;
-    };
+  | Extract<DecisionResult, { outcome: 'deny' }>
+  | (Exclude<DecisionResult, { outcome: 'deny' }> & { ledgerRecord: RefundLedgerRecord });
 
 /**
  * The vocabulary of a ledger read. Owned here because the ledger decides

@@ -105,13 +105,14 @@ async function recordAs(
   outcome: 'allow' | 'require_approval',
   params: RecordRefundParams = refundParams(),
 ): Promise<RefundLedgerRecord> {
-  return written(await ledger.recordRefund(params, [], () => decision(outcome, params))).record;
+  return written(await ledger.recordRefund(params, [], () => decision(outcome, params)))
+    .ledgerRecord;
 }
 
 /** Narrows to the written variants of the result; a deny here is a test bug. */
 function written(
   result: RecordRefundResult,
-): Extract<RecordRefundResult, { record: RefundLedgerRecord }> {
+): Extract<RecordRefundResult, { ledgerRecord: RefundLedgerRecord }> {
   if (result.outcome === 'deny') throw new Error('expected a written record, got deny');
   return result;
 }
@@ -192,15 +193,14 @@ describe('InMemoryRefundLedger', () => {
         await ledger.recordRefund(refundParams(), [], () => decision('allow')),
       );
       expect(result.outcome).toBe('allow');
-      expect(result.decision.outcome).toBe('allow');
-      expect(result.record).toMatchObject({
+      expect(result.ledgerRecord).toMatchObject({
         ...refundParams(),
         status: 'attempted',
         createdAt: FIXED_NOW,
         decisionRecord: decision('allow'),
       });
-      expect(result.record.id).toEqual(expect.any(String));
-      expect(result.record).not.toHaveProperty('backendRefundId');
+      expect(result.ledgerRecord.id).toEqual(expect.any(String));
+      expect(result.ledgerRecord).not.toHaveProperty('backendRefundId');
     });
 
     it('opens the record as pending on require_approval', async () => {
@@ -212,9 +212,8 @@ describe('InMemoryRefundLedger', () => {
     it('writes nothing on deny and returns only the decision', async () => {
       const ledger = new InMemoryRefundLedger();
       const result = await ledger.recordRefund(refundParams(), [], () => decision('deny'));
-      expect(result.outcome).toBe('deny');
-      expect(result.decision.outcome).toBe('deny');
-      expect(result).not.toHaveProperty('record');
+      expect(result).toMatchObject({ outcome: 'deny', reason: 'not_eligible' });
+      expect(result).not.toHaveProperty('ledgerRecord');
       expect(await ledger.list()).toEqual([]);
     });
 

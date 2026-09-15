@@ -114,7 +114,7 @@ export class InMemoryRefundLedger implements RefundLedger {
     // reserve and nothing for the inbox. The decision span is deny's only
     // trace until the audit log lands.
     if (decision.outcome === 'deny') {
-      return { outcome: decision.outcome, decision };
+      return decision;
     }
 
     const record: RefundLedgerRecord = {
@@ -127,7 +127,9 @@ export class InMemoryRefundLedger implements RefundLedger {
 
     this.records.push(record);
 
-    return { outcome: decision.outcome, decision, record: this.copyOut(record) };
+    // Spread distributes over the decision union, so each member keeps its
+    // own outcome and reason and gains the row.
+    return { ...decision, ledgerRecord: this.copyOut(record) };
   }
 
   async settleRefundRecord(id: string, response: IssueRefundResponse): Promise<RefundLedgerRecord> {

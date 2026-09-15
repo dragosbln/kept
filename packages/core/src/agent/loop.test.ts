@@ -20,6 +20,7 @@ import { DemoBackend } from '../backend/demo.js';
 import { makeDemoOrders } from '../backend/seed-orders.js';
 import { InMemoryRefundLedger, customerKeyFor } from '../refund-ledger/index.js';
 import type { PolicyRequest } from '../policy/types.js';
+import { DEFAULT_POLICY_CONFIG, PolicyEngine } from '../policy/index.js';
 import type { ModelClient } from '../model/client.js';
 import type { CallModelResponse, ModelClientConfig } from '../model/types.js';
 import type { Message, ToolArgs } from '../messages.js';
@@ -91,7 +92,11 @@ function toolUse(calls: { id: string; name: string; args: ToolArgs }[]): CallMod
   };
 }
 
-const registry = createToolRegistry(new DemoBackend(makeDemoOrders()), new InMemoryRefundLedger());
+const registry = createToolRegistry(
+  new DemoBackend(makeDemoOrders()),
+  new InMemoryRefundLedger(),
+  new PolicyEngine(DEFAULT_POLICY_CONFIG),
+);
 
 type RunReturnType = {
   trace: Trace;

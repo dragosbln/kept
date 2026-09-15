@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ToolName, ToolRegistry, ToolResult } from '../tools/types.js';
+import { describeError } from '../tools/utils.js';
 import type { ExecuteToolCallArgs, ExecuteToolParams, SettledToolCall } from './types.js';
 
 export const DEFAULT_TOOL_TIMEOUT_MS = 10_000;
@@ -88,10 +89,7 @@ export async function executeTool<TSchema extends z.ZodType>({
   } catch (error) {
     return {
       resultState: 'failed',
-      result:
-        error instanceof Error
-          ? { errorName: error.name, errorMessage: error.message }
-          : { errorMessage: String(error) },
+      result: describeError(error),
       response: 'Tool call failed.',
     };
   } finally {
