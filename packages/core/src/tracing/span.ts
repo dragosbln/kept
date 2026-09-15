@@ -24,6 +24,19 @@ import type {
 } from './types.js';
 
 /**
+ * Wall-clock time with sub-millisecond precision: the monotonic clock read
+ * against the process's epoch origin. Date.now() is whole milliseconds, and
+ * that was enough to mislead Langfuse's agent graph, which infers steps from
+ * timing: a tool span starting on the same millisecond its model call ended
+ * reads as parallel to it, and two parallel tool calls whose durations round
+ * to zero read as sequential. Spans and traces both stamp from here so the
+ * ordering the loop produced survives into the export.
+ */
+export function wallClockNow(): number {
+  return performance.timeOrigin + performance.now();
+}
+
+/**
  * Lifecycle + payload protocol, written once. The four parameters mirror
  * the payload partition in types.ts:
  *
@@ -52,7 +65,7 @@ export abstract class SpanBase<
       id: crypto.randomUUID(),
       traceId,
       parentId: parentSpanId,
-      startedAt: Date.now(),
+      startedAt: wallClockNow(),
       status: 'in_progress',
     };
     this.payload = payload;

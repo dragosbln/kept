@@ -67,8 +67,38 @@ function mapOperationName(spanKind: SpanKind): 'chat' | 'execute_tool' | null {
   }
 }
 
+/**
+ * Keeps the sub-millisecond part: whole milliseconds go through BigInt
+ * exactly, the fraction is rounded to nanoseconds on its own. Rounding the
+ * input to milliseconds first put contiguous spans on the same instant and
+ * broke the agent graph; see wallClockNow.
+ */
 function millisecondsToNanoStr(input: number): string {
-  return (BigInt(Math.round(input)) * BigInt(1e6)).toString();
+  const wholeMs = Math.floor(input);
+  const fractionNs = Math.round((input - wholeMs) * 1e6);
+  return (BigInt(wholeMs) * 1_000_000n + BigInt(fractionNs)).toString();
+}
+
+/**
+ * Langfuse's own classification, emitted explicitly because an explicit
+ * type always wins over its inference from gen_ai.* attributes. The turn is
+ * the agent, the policy decision is a guardrail; those two would otherwise
+ * be plain spans.
+ */
+function mapObservationType(spanKind: SpanKind): 'agent' | 'generation' | 'tool' | 'guardrail' {
+  switch (spanKind) {
+    case 'turn':
+      return 'agent';
+    case 'model_call':
+      return 'generation';
+    case 'tool_execution':
+      return 'tool';
+    case 'policy_decision':
+      return 'guardrail';
+    default:
+      spanKind satisfies never;
+      return 'agent';
+  }
 }
 
 function getOtlpStatus(span: CompletedSpanPayload): OtlpStatus {
@@ -185,6 +215,7 @@ function mapSpanAttributes(trace: CompletedTrace, span: CompletedSpanPayload): O
     str(langfuseAttributes.policyConfigHash, trace.policyConfigHash),
     str(otelAttributes.sessionId, trace.sessionId),
     str(otelAttributes.errorType, span.errorType),
+    str(langfuseAttributes.observationType, mapObservationType(span.kind)),
   ];
 
   const operationName = mapOperationName(span.kind);

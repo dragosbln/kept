@@ -25,7 +25,7 @@ export type SpanPayloadBase = {
   id: string;
   traceId: string;
   parentId: string | null;
-  startedAt: number; // wall clock (epoch ms); duration is measured monotonically
+  startedAt: number; // wall clock, epoch ms with sub-ms precision (see wallClockNow); duration is measured monotonically
   duration?: number;
   errorType?: ErrorType;
   status: SpanStatus;

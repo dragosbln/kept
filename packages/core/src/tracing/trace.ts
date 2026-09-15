@@ -4,6 +4,7 @@ import {
   ToolExecutionSpan,
   TurnSpan,
   type AnySpan,
+  wallClockNow,
 } from './span.js';
 import type {
   CompletedTrace,
@@ -31,7 +32,7 @@ export class Trace {
     this.payload = {
       ...config,
       id: crypto.randomUUID(),
-      startedAt: Date.now(),
+      startedAt: wallClockNow(),
       faultToggles: config.faultToggles ?? [],
     };
     this.startMark = performance.now();

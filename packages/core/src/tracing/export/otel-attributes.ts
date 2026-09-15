@@ -31,6 +31,7 @@ export const otelAttributes = {
 } as const;
 
 export const langfuseAttributes = {
+  observationType: 'langfuse.observation.type',
   input: 'langfuse.observation.input',
   output: 'langfuse.observation.output',
   sessionId: 'langfuse.session.id',

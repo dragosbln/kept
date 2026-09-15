@@ -128,6 +128,18 @@ const attr = (span: OtlpSpan, key: string): string | undefined =>
   span.attributes.find((a) => a.key === key)?.value.stringValue;
 
 describe('Trace recorder', () => {
+  it('gives a span that starts after another ended a strictly later start time', () => {
+    // Contiguous by construction, the way the loop opens a tool span right
+    // after the model call span closes; whole-millisecond clocks tied them.
+    const trace = new Trace(traceConfig);
+    const first = trace.startTurnSpan(null, { customerInput: 'a' });
+    first.end({ outcome: { type: 'reply', message: 'a' } });
+    const second = trace.startTurnSpan(null, { customerInput: 'b' });
+    second.end({ outcome: { type: 'reply', message: 'b' } });
+    const [a, b] = trace.end().spans;
+    expect(b!.startedAt).toBeGreaterThan(a!.startedAt + a!.duration);
+  });
+
   it('collects all spans in start order with durations stamped', () => {
     const completed = recordOneConversation().end();
     expect(completed.spans.map((s) => s.kind)).toEqual(['turn', 'model_call', 'tool_execution']);
@@ -305,6 +317,36 @@ describe('OTLP mapper', () => {
     for (const span of spans) {
       expect(span.attributes.map((a) => a.key)).not.toContain(key);
     }
+  });
+
+  it('keeps sub-millisecond precision in the nanosecond timestamps', () => {
+    // Langfuse infers the agent graph from timing; a span rounded onto the
+    // millisecond its predecessor ended on reads as parallel to it.
+    const fractional = mapTraceToOTLPEnvelope({
+      ...completed,
+      spans: [{ ...completed.spans[0]!, startedAt: 1_787_184_000_000.25, duration: 0.5 }],
+    }).resourceSpans[0]!.scopeSpans[0]!.spans[0]!;
+    expect(fractional.startTimeUnixNano).toBe('1787184000000250000');
+    expect(fractional.endTimeUnixNano).toBe('1787184000000750000');
+  });
+
+  it('stamps every span with its Langfuse observation type', () => {
+    const typed = mapTraceToOTLPEnvelope(recordOneDecision().end()).resourceSpans[0]!.scopeSpans[0]!
+      .spans;
+    const typeOf = (name: string): string | undefined =>
+      attr(
+        typed.find((s) => s.name === name)!,
+        'langfuse.observation.type',
+      );
+    expect(typeOf('turn')).toBe('agent');
+    expect(typeOf('tool_execution')).toBe('tool');
+    expect(typeOf('policy_decision')).toBe('guardrail');
+    expect(
+      attr(
+        spans.find((s) => s.name === 'model_call')!,
+        'langfuse.observation.type',
+      ),
+    ).toBe('generation');
   });
 
   it('converts wall-clock milliseconds to nanosecond strings', () => {
