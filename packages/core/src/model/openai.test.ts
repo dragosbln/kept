@@ -39,6 +39,9 @@ const unreachableLedger: RefundLedger = {
   updateRefundRecordStatus: () => {
     throw new Error('model-client tests must never execute tools');
   },
+  findRecord: () => {
+    throw new Error('model-client tests must never execute tools');
+  },
   list: () => {
     throw new Error('model-client tests must never execute tools');
   },

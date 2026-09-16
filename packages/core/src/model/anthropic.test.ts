@@ -40,6 +40,9 @@ const unreachableLedger: RefundLedger = {
   updateRefundRecordStatus: () => {
     throw new Error('model-client tests must never execute tools');
   },
+  findRecord: () => {
+    throw new Error('model-client tests must never execute tools');
+  },
   list: () => {
     throw new Error('model-client tests must never execute tools');
   },
@@ -259,6 +262,26 @@ describe('AnthropicModelClient request shape', () => {
     await client.callModel(history);
     const messages = body()['messages'] as { content: { is_error: boolean }[] }[];
     expect(messages[0]!.content[0]!.is_error).toBe(true);
+  });
+
+  it('does not mark unknown tool results as errors: the flag invites the retry the text forbids', async () => {
+    const history: Message[] = [
+      {
+        role: 'user',
+        parts: [
+          {
+            type: 'tool_call_response',
+            id: 'call-10',
+            response: 'Refund state unknown; it may have been issued. Do not retry.',
+            status: 'unknown',
+          },
+        ],
+      },
+    ];
+    const { client, body } = makeCapturingClient();
+    await client.callModel(history);
+    const messages = body()['messages'] as { content: { is_error: boolean }[] }[];
+    expect(messages[0]!.content[0]!.is_error).toBe(false);
   });
 
   it('surfaces an illegal role in history as transport_error, not a throw', async () => {

@@ -29,6 +29,9 @@ const unreachableLedger: RefundLedger = {
   updateRefundRecordStatus: () => {
     throw new Error('wire-format translation must never execute tools');
   },
+  findRecord: () => {
+    throw new Error('wire-format translation must never execute tools');
+  },
   list: () => {
     throw new Error('wire-format translation must never execute tools');
   },

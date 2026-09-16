@@ -56,6 +56,17 @@ export class LedgerError extends Error {
  */
 export type DecideFn = (results: RefundLedgerRecord[][]) => DecisionResult;
 
+/**
+ * The crash signature: an `attempted` record older than the window in which
+ * the tool call that opened it could still be running. Attempted records
+ * never carry backend fields, so age is the whole test. The window is the
+ * caller's to name (the executor's tool timeout is the natural value); the
+ * ledger has no reason to know it.
+ */
+export function isCrashSignature(record: RefundLedgerRecord, sinceMs: number): boolean {
+  return record.status === 'attempted' && record.createdAt < sinceMs;
+}
+
 export interface RefundLedger {
   /**
    * The atomic operation behind every write. Reads the counting records each
@@ -73,10 +84,14 @@ export interface RefundLedger {
     queries: LedgerQuery[],
     decide: DecideFn,
   ): Promise<RecordRefundResult>;
+  /** The record by id, null when there is none. Reconciliation starts here. */
+  findRecord(id: string): Promise<RefundLedgerRecord | null>;
   /**
-   * Closes an `attempted` record with what the backend answered. `ok` carries
-   * the backend's refund id and the amount it actually moved; `failed` and
-   * `unknown` carry only the status.
+   * Closes an `attempted` or `unknown` record with what the backend
+   * answered, the second being a late answer obtained by replaying the key.
+   * `ok` carries the backend's refund id and the amount it actually moved;
+   * `failed` and `unknown` carry only the status. An unknown answer on a
+   * record already unknown changes nothing and returns it unchanged.
    */
   settleRefundRecord(id: string, response: IssueRefundResponse): Promise<RefundLedgerRecord>;
   /**

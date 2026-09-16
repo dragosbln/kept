@@ -51,8 +51,8 @@ export type SanitizedOrder = Pick<
   | 'shipments'
 >;
 
+/** The request the key names. Two requests are the same when these agree. */
 export type IssueRefundParams = {
-  key: string;
   orderId: string;
   orderItemId: string;
   quantity: number;
@@ -64,7 +64,16 @@ export type RefundErrorType =
   | 'quantity_exceeds_unrefunded'
   | 'not_refundable'
   | 'quantity_invalid'
+  | 'key_conflict'
   | '_OTHER';
+
+/**
+ * Why a backend could not know the outcome. Annotation for the trace and
+ * the inbox only: nothing decides on it, position decides (see the tool's
+ * zones). `in_flight` is a replay of a request the backend is still
+ * executing.
+ */
+export type UnknownRefundErrorType = 'in_flight' | 'platform_unreachable' | 'lookup_failed';
 
 export type IssueRefundResponse =
   | {
@@ -80,4 +89,5 @@ export type IssueRefundResponse =
     }
   | {
       status: 'unknown';
+      errorType?: UnknownRefundErrorType;
     };

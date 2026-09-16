@@ -30,19 +30,6 @@ export const settle = {
   }),
 };
 
-export type ErrorDetail = { errorName?: string; errorMessage: string };
-
-/**
- * A thrown value as the trace records it: name and message. The object
- * itself serializes to nothing useful, which is how a stack of `{}` entries
- * ended up in early traces.
- */
-export function describeError(error: unknown): ErrorDetail {
-  return error instanceof Error
-    ? { errorName: error.name, errorMessage: error.message }
-    : { errorMessage: String(error) };
-}
-
 export function defineTool<TSchema extends z.ZodType>(
   def: ToolDefinition<TSchema>,
 ): ToolDefinition<TSchema> {

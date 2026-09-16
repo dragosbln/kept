@@ -227,6 +227,19 @@ describe('InMemoryRefundLedger', () => {
       expect(await ledger.list()).toEqual([]);
     });
 
+    it('mints the idempotency key from the record id', async () => {
+      const ledger = new InMemoryRefundLedger();
+      const record = await recordAs(ledger, 'allow');
+      expect(record.idempotencyKey).toBe(record.id);
+    });
+
+    it('finds a record by id and answers null for an unknown one', async () => {
+      const ledger = new InMemoryRefundLedger();
+      const record = await recordAs(ledger, 'allow');
+      expect(await ledger.findRecord(record.id)).toEqual(record);
+      expect(await ledger.findRecord('no-such-id')).toBeNull();
+    });
+
     it('gives every record its own id', async () => {
       const ledger = new InMemoryRefundLedger();
       const first = await recordAs(ledger, 'allow');
@@ -395,13 +408,26 @@ describe('InMemoryRefundLedger', () => {
       expect((await ledger.list()).map((record) => record.status)).toEqual(['unknown']);
     });
 
-    it.each(ALL_STATUSES.filter((candidate) => candidate !== 'attempted'))(
-      'refuses to settle a record in %s',
-      async (status) => {
-        const { ledger, id } = await ledgerWithRecordIn(status);
-        await expect(ledger.settleRefundRecord(id, okResponse)).rejects.toThrow(LedgerError);
-      },
-    );
+    it('settles an unknown record with a late ok answer, and leaves it unknown on an unknown one', async () => {
+      const { ledger, id } = await ledgerWithRecordIn('unknown');
+      expect(await ledger.settleRefundRecord(id, { status: 'unknown' })).toMatchObject({
+        status: 'unknown',
+      });
+      expect((await ledger.list())[0]!.status).toBe('unknown');
+      const settled = await ledger.settleRefundRecord(id, okResponse);
+      expect(settled).toMatchObject({
+        status: 'ok',
+        backendRefundId: 'backend-refund-1',
+        refundedAmountMinorUnits: 8900,
+      });
+    });
+
+    it.each(
+      ALL_STATUSES.filter((candidate) => candidate !== 'attempted' && candidate !== 'unknown'),
+    )('refuses to settle a record in %s', async (status) => {
+      const { ledger, id } = await ledgerWithRecordIn(status);
+      await expect(ledger.settleRefundRecord(id, okResponse)).rejects.toThrow(LedgerError);
+    });
 
     it('throws on an unknown id', async () => {
       const ledger = new InMemoryRefundLedger();

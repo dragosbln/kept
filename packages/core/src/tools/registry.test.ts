@@ -44,7 +44,7 @@ function fakeBackend(stock: Order[]): FakeBackendReturnType {
       requestedIds.push(orderId);
       return stock.find((candidate) => candidate.id === orderId) ?? null;
     },
-    issueRefund: (params) => demo.issueRefund(params),
+    issueRefund: (key, params) => demo.issueRefund(key, params),
   };
   return { backend, ledger: new InMemoryRefundLedger(), requestedIds };
 }
@@ -198,6 +198,7 @@ function ledgerBreakingOn(
       broken.has('updateRefundRecordStatus')
         ? Promise.reject(error())
         : real.updateRefundRecordStatus(id, status),
+    findRecord: (id) => real.findRecord(id),
     list: () => real.list(),
   };
 }
@@ -212,9 +213,9 @@ describe('issue_refund', () => {
     const ledgerDuringBackendCall: string[] = [];
     const observing: OrderBackend = {
       ...backend,
-      issueRefund: async (params) => {
+      issueRefund: async (key, params) => {
         ledgerDuringBackendCall.push(...(await ledger.list()).map((record) => record.status));
-        return backend.issueRefund(params);
+        return backend.issueRefund(key, params);
       },
     };
     const registry = createToolRegistry(observing, ledger, policyEngine);
@@ -282,7 +283,7 @@ describe('issue_refund', () => {
     const demo = new DemoBackend([delivered], { 'order-1005': { 'order-1005-line-1': 1 } });
     const backend: OrderBackend = {
       findOrder: (orderId) => demo.findOrder(orderId),
-      issueRefund: (params) => demo.issueRefund(params),
+      issueRefund: (key, params) => demo.issueRefund(key, params),
     };
     const ledger = new InMemoryRefundLedger();
     const registry = createToolRegistry(backend, ledger, policyEngine);
@@ -303,9 +304,9 @@ describe('issue_refund', () => {
     let refundCalls = 0;
     const counting: OrderBackend = {
       ...backend,
-      issueRefund: (params) => {
+      issueRefund: (key, params) => {
         refundCalls += 1;
-        return backend.issueRefund(params);
+        return backend.issueRefund(key, params);
       },
     };
     const registry = createToolRegistry(counting, ledger, policyEngine);
@@ -350,7 +351,7 @@ describe('issue_refund', () => {
       expect(result.result).toMatchObject({
         backendResponse: { status: 'ok', amountMinorUnits: 7900 },
       });
-      expect(await backend.issueRefund({ key: 'probe', ...args })).toMatchObject({
+      expect(await backend.issueRefund('probe', args)).toMatchObject({
         errorType: 'quantity_exceeds_unrefunded',
       });
       // The reconciliation in the catch told the ledger what the tool knows: unknown.
@@ -363,9 +364,9 @@ describe('issue_refund', () => {
     let refundCalls = 0;
     const counting: OrderBackend = {
       ...backend,
-      issueRefund: (params) => {
+      issueRefund: (key, params) => {
         refundCalls += 1;
-        return backend.issueRefund(params);
+        return backend.issueRefund(key, params);
       },
     };
     const registry = createToolRegistry(
@@ -425,9 +426,9 @@ describe('issue_refund', () => {
     let refundCalls = 0;
     const counting: OrderBackend = {
       ...backend,
-      issueRefund: (params) => {
+      issueRefund: (key, params) => {
         refundCalls += 1;
-        return backend.issueRefund(params);
+        return backend.issueRefund(key, params);
       },
     };
     const registry = createToolRegistry(counting, ledger, policyEngine);
@@ -459,9 +460,9 @@ describe('issue_refund', () => {
     let refundCalls = 0;
     const counting: OrderBackend = {
       ...backend,
-      issueRefund: (params) => {
+      issueRefund: (key, params) => {
         refundCalls += 1;
-        return backend.issueRefund(params);
+        return backend.issueRefund(key, params);
       },
     };
     const registry = createToolRegistry(counting, ledger, policyEngine);

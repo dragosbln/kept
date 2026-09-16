@@ -1,5 +1,5 @@
 export type { RefundLedger, LedgerErrorType, DecideFn } from './refund-ledger.js';
-export { LedgerError } from './refund-ledger.js';
+export { LedgerError, isCrashSignature } from './refund-ledger.js';
 export type {
   RefundLedgerRecord,
   RefundLedgerRecordStatus,

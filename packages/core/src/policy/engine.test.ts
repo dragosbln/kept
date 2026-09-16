@@ -52,6 +52,7 @@ function request(overrides: Partial<PolicyRequest> = {}): PolicyRequest {
 function record(overrides: Partial<RefundLedgerRecord> = {}): RefundLedgerRecord {
   return {
     id: 'rec-1',
+    idempotencyKey: 'rec-1',
     callId: 'call-1',
     orderId: 'order-1002',
     orderItemId: 'order-1002-line-1',

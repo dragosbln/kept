@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolName, ToolRegistry, ToolResult } from '../tools/types.js';
-import { describeError } from '../tools/utils.js';
+import { describeError } from '../refunds/execute.js';
 import type { ExecuteToolCallArgs, ExecuteToolParams, SettledToolCall } from './types.js';
 
 export const DEFAULT_TOOL_TIMEOUT_MS = 10_000;

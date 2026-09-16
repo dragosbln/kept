@@ -16,6 +16,12 @@ export const COUNTING_STATUSES: ReadonlySet<RefundLedgerRecordStatus> =
 
 export type RefundLedgerRecord = {
   id: string;
+  /**
+   * The idempotency key handed to the backend for this write, minted by the
+   * ledger at creation. Equal to the id today; its own field so an adapter's
+   * key scheme never leaks into the record's identity.
+   */
+  idempotencyKey: string;
   callId: string;
   orderId: string;
   orderItemId: string;
@@ -41,7 +47,8 @@ export type RefundLedgerRecord = {
    *    - "pending" -> "attempted", if human approves
    *    - "pending" -> "denied", if human denies
    * - "attempted" -> "ok" | "failed" | "unknown", based on the response from the backend
-   * - a human can reconcile "unknown" -> "ok" or "failed"
+   * - "unknown" -> "ok" | "failed" when reconciliation replays the key and the backend answers; an unknown answer leaves it unknown
+   * - a human can also reconcile "unknown" -> "ok" or "failed" by hand
    * - "ok" and "failed" are terminal states
    *
    * for calculating caps, records in status 'pending' | 'attempted' | 'ok' | 'unknown' count; records in 'failed' | 'denied' do not (COUNTING_STATUSES)

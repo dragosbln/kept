@@ -10,6 +10,7 @@ export type {
   IssueRefundParams,
   IssueRefundResponse,
   RefundErrorType,
+  UnknownRefundErrorType,
 } from './types.js';
 export { DemoBackend } from './demo.js';
 export { makeDemoOrders } from './seed-orders.js';

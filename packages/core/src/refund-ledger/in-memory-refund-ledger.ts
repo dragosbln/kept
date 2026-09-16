@@ -117,9 +117,11 @@ export class InMemoryRefundLedger implements RefundLedger {
       return decision;
     }
 
+    const id = crypto.randomUUID();
     const record: RefundLedgerRecord = {
       ...params,
-      id: crypto.randomUUID(),
+      id,
+      idempotencyKey: id,
       createdAt: this.now(),
       status: decision.outcome === 'allow' ? 'attempted' : 'pending',
       decisionRecord: decision,
@@ -132,15 +134,25 @@ export class InMemoryRefundLedger implements RefundLedger {
     return { ...decision, ledgerRecord: this.copyOut(record) };
   }
 
+  async findRecord(id: string): Promise<RefundLedgerRecord | null> {
+    const record = this.records.find((candidate) => candidate.id === id);
+    return record ? this.copyOut(record) : null;
+  }
+
   async settleRefundRecord(id: string, response: IssueRefundResponse): Promise<RefundLedgerRecord> {
     const index = this.indexOf(id);
     const record = this.records[index]!;
 
-    if (record.status !== 'attempted') {
+    if (record.status !== 'attempted' && record.status !== 'unknown') {
       throw new LedgerError(
         'illegal_transition',
-        `Can only settle records in 'attempted' status; ${id} is '${record.status}'`,
+        `Can only settle records in 'attempted' or 'unknown' status; ${id} is '${record.status}'`,
       );
+    }
+
+    // Reconciliation came back unknown again: nothing new to record.
+    if (record.status === 'unknown' && response.status === 'unknown') {
+      return this.copyOut(record);
     }
 
     const settled: RefundLedgerRecord =

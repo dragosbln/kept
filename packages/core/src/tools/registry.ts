@@ -1,28 +1,15 @@
 import { z } from 'zod';
-import {
-  refundAmountFor,
-  sanitizeOrderForModel,
-  type IssueRefundResponse,
-  type OrderBackend,
-} from '../backend/index.js';
+import { refundAmountFor, sanitizeOrderForModel, type OrderBackend } from '../backend/index.js';
 import type { ToolRegistry, ToolResult } from './types.js';
-import {
-  defineTool,
-  describeError,
-  presentOrderForModel,
-  presentRefundForModel,
-  settle,
-  type ErrorDetail,
-} from './utils.js';
+import { defineTool, presentOrderForModel, presentRefundForModel, settle } from './utils.js';
 import {
   customerKeyFor,
   type RecordRefundResult,
   type RefundLedger,
-  type RefundLedgerRecord,
-  type RefundLedgerRecordStatus,
 } from '../refund-ledger/index.js';
 import type { PolicyEngine } from '../policy/engine.js';
 import type { PolicyRequest } from '../policy/types.js';
+import { executeRefund, type RefundExecution } from '../refunds/execute.js';
 
 const LookupOrderInputSchema = z.object({ orderId: z.string() });
 
@@ -31,77 +18,6 @@ const IssueRefundInputSchema = z.object({
   orderItemId: z.string(),
   quantity: z.number(),
 });
-
-/**
- * What executing an `attempted` record against the backend came to, named by
- * what is known afterwards, never by what threw. `settled`: the backend
- * answered and the ledger holds the answer. `unknown`: something threw after
- * the backend was asked, so the money may have moved; `ledgerRecord` is the
- * row marked unknown when the ledger could be told, null with the refusal
- * beside it when it could not, and `backendResponse` is whatever answer had
- * arrived before the throw.
- */
-export type RefundExecution =
-  | { status: 'not_attempted'; ledgerStatus: RefundLedgerRecordStatus }
-  | { status: 'settled'; backendResponse: IssueRefundResponse; ledgerRecord: RefundLedgerRecord }
-  | {
-      status: 'unknown';
-      error: ErrorDetail;
-      backendResponse: IssueRefundResponse | null;
-      ledgerRecord: RefundLedgerRecord | null;
-      reconciliationError?: ErrorDetail;
-    };
-
-/**
- * Zones 2 and 3 of a refund, shared with the inbox's approve action: ask the
- * backend, settle the record with its answer. Position decides the state:
- * before the backend call nothing has moved; after it, any throw, ledger or
- * otherwise, is unknown. The reconciliation in the catch is itself guarded,
- * because a throw escaping here would reach the executor as failed, which
- * tells the model it is safe to try again.
- */
-export async function executeRefund(
-  ledgerRecord: RefundLedgerRecord,
-  ledger: RefundLedger,
-  backend: OrderBackend,
-): Promise<RefundExecution> {
-  if (ledgerRecord.status !== 'attempted') {
-    return { status: 'not_attempted', ledgerStatus: ledgerRecord.status };
-  }
-
-  let backendResponse: IssueRefundResponse | null = null;
-  try {
-    backendResponse = await backend.issueRefund({
-      // Placeholder until the idempotency work: the ledger record names
-      // the decision, so its id is the key that identifies this write.
-      // The call id is a different fact (which model request asked).
-      key: ledgerRecord.id,
-      orderId: ledgerRecord.orderId,
-      orderItemId: ledgerRecord.orderItemId,
-      quantity: ledgerRecord.quantity,
-    });
-    const settled = await ledger.settleRefundRecord(ledgerRecord.id, backendResponse);
-    return { status: 'settled', backendResponse, ledgerRecord: settled };
-  } catch (error) {
-    try {
-      const reconciled = await ledger.updateRefundRecordStatus(ledgerRecord.id, 'unknown');
-      return {
-        status: 'unknown',
-        error: describeError(error),
-        backendResponse,
-        ledgerRecord: reconciled,
-      };
-    } catch (reconciliationError) {
-      return {
-        status: 'unknown',
-        error: describeError(error),
-        backendResponse,
-        ledgerRecord: null,
-        reconciliationError: describeError(reconciliationError),
-      };
-    }
-  }
-}
 
 /** The execution as the model reads it. Only the backend's ok answer is presented in detail. */
 function presentExecution(execution: RefundExecution): ToolResult {
