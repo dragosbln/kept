@@ -1,6 +1,13 @@
 // --- Vocabulary -------------------------------------------------------------
 
 import type { ErrorType, Message, ToolArgs, ToolResultState } from '../messages.js';
+import type {
+  DecisionOutcome,
+  DecisionRecord,
+  DenyReason,
+  PolicyRequest,
+  RequireApprovalReason,
+} from '../policy/types.js';
 
 /** Which commerce backend served the conversation's tools. */
 export type BackendKind = 'demo' | 'medusa';
@@ -18,7 +25,7 @@ export type SpanPayloadBase = {
   id: string;
   traceId: string;
   parentId: string | null;
-  startedAt: number; // wall clock (epoch ms); duration is measured monotonically
+  startedAt: number; // wall clock, epoch ms with sub-ms precision (see wallClockNow); duration is measured monotonically
   duration?: number;
   errorType?: ErrorType;
   status: SpanStatus;
@@ -91,6 +98,32 @@ export type EndTurnPayload = Required<Pick<TurnPayload, 'outcome'>>;
 export type StartTurnPayload = Omit<TurnPayload, keyof EndTurnPayload>;
 
 /**
+ * The policy engine's verdict on one write, parented by the tool_execution
+ * span that asked. Start carries what the tool knows before the ledger is
+ * consulted, the request and the hash of the config it will be judged by,
+ * so a span the sweep has to close still names both. End carries the
+ * outcome, the reason when there is one, and the decision record: the same
+ * object the ledger stores, so the inbox and an eval read one shape.
+ */
+export type PolicyDecisionPayload = {
+  configHash: string;
+  request: PolicyRequest;
+  outcome?: DecisionOutcome;
+  reason?: RequireApprovalReason | DenyReason;
+  decision?: DecisionRecord;
+};
+
+export type EndPolicyDecisionPayload = Required<
+  Pick<PolicyDecisionPayload, 'outcome' | 'decision'>
+> &
+  Pick<PolicyDecisionPayload, 'reason'>;
+
+export type StartPolicyDecisionPayload = Omit<
+  PolicyDecisionPayload,
+  keyof EndPolicyDecisionPayload
+>;
+
+/**
  * Compile-time guard: a kind payload must not reuse a SpanPayloadBase field
  * name (or `kind`). A collision would make that SpanPayload union member
  * uninhabited, with TS reporting the error far away on `kind`; this
@@ -103,7 +136,8 @@ type DisjointFromBase<
 export type SpanKindPayload =
   | ({ kind: 'model_call' } & DisjointFromBase<ModelCallPayload>)
   | ({ kind: 'tool_execution' } & DisjointFromBase<ToolExecutionPayload>)
-  | ({ kind: 'turn' } & DisjointFromBase<TurnPayload>);
+  | ({ kind: 'turn' } & DisjointFromBase<TurnPayload>)
+  | ({ kind: 'policy_decision' } & DisjointFromBase<PolicyDecisionPayload>);
 
 export type SpanKind = SpanKindPayload['kind'];
 
@@ -123,6 +157,7 @@ export type CompletedSpanPayload = SpanPayload & {
 export type ModelCallSpanPayload = Extract<SpanPayload, { kind: 'model_call' }>;
 export type ToolExecutionSpanPayload = Extract<SpanPayload, { kind: 'tool_execution' }>;
 export type TurnSpanPayload = Extract<SpanPayload, { kind: 'turn' }>;
+export type PolicyDecisionSpanPayload = Extract<SpanPayload, { kind: 'policy_decision' }>;
 
 // --- Trace payloads ---------------------------------------------------------
 
@@ -141,13 +176,19 @@ export type TracePayload = {
   promptVersion: string;
   promptHash: string;
   providerName: string;
+  /**
+   * Hash of the policy config the conversation ran under, stamped like
+   * promptHash: a filter key. The authoritative value is on each
+   * policy_decision span. Absent when the host runs without an engine.
+   */
+  policyConfigHash?: string;
 };
 
 export type TraceConfig = Pick<
   TracePayload,
   'providerName' | 'promptName' | 'promptVersion' | 'promptHash' | 'sessionId' | 'backendKind'
 > &
-  Partial<Pick<TracePayload, 'faultToggles'>>;
+  Partial<Pick<TracePayload, 'faultToggles' | 'policyConfigHash'>>;
 
 export type CompletedTrace = TracePayload & {
   duration: number; // optional on TracePayload, but end() always stamps it

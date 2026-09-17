@@ -1,13 +1,17 @@
 // Unit tests for the trace recorder and the OTLP mapper. These run in the
 // eval matrix's world: in-process, no Langfuse, no network (ADR 0001). The
 // mapper cases pin the wire-format details that broke during development:
-// id formats, nanosecond conversion, undefined-dropping, and the
-// convention-shape message translation (args → arguments).
+// id formats, nanosecond conversion, undefined-dropping, the
+// convention-shape message translation (args → arguments), and the
+// Langfuse-only `result` copy of tool results.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Trace } from './trace.js';
 import { mapTraceToOTLPEnvelope } from './export/otlp.js';
 import type { StartModelCallPayload, TraceConfig } from './types.js';
+import type { OtlpSpan } from './export/otlp.js';
+import { customerKeyFor } from '../refund-ledger/customer-key.js';
+import type { DecisionRecord, PolicyRequest } from '../policy/types.js';
 
 const traceConfig: TraceConfig = {
   sessionId: 'session-1',
@@ -72,7 +76,70 @@ function recordConversationWithAbandonedTool(): Trace {
   return trace;
 }
 
+const policyRequest: PolicyRequest = {
+  action: 'issue_refund',
+  customerKey: customerKeyFor({ email: 'sam@example.com' }),
+  orderId: 'order-1002',
+  orderItemId: 'order-1002-line-2',
+  quantity: 1,
+  currency: 'USD',
+  amountMinorUnits: 1200,
+};
+
+/** The split-refund verdict: the insoles trip the per-order cap behind the boots. */
+const decisionRecord: DecisionRecord = {
+  configHash: 'cfg-1',
+  request: policyRequest,
+  eligibility: [{ ruleKind: 'item_not_delivered', passed: true }],
+  perCap: [
+    {
+      kind: 'per_order',
+      currency: 'USD',
+      capAmountMinorUnits: 10_000,
+      consumedAmountMinorUnits: 8900,
+      requestedAmountMinorUnits: 1200,
+      remainingBeforeMinorUnits: 1100,
+      outcome: 'require_approval',
+      contributingRecordIds: ['rec-boots'],
+    },
+  ],
+};
+
+/** A refund turn: the tool consults the engine and the request lands in the queue. */
+function recordOneDecision(config: TraceConfig = traceConfig): Trace {
+  const trace = new Trace(config);
+  const turn = trace.startTurnSpan(null, { customerInput: 'Refund the insoles.' });
+  const tool = trace.startToolExecutionSpan(turn.id, {
+    callId: 'call_2',
+    toolName: 'issue_refund',
+    args: { orderId: 'order-1002', orderItemId: 'order-1002-line-2', quantity: 1 },
+  });
+  const decision = trace.startPolicyDecisionSpan(tool.id, {
+    configHash: 'cfg-1',
+    request: policyRequest,
+  });
+  decision.end({ outcome: 'require_approval', reason: 'cap_exceeded', decision: decisionRecord });
+  tool.end({ resultState: 'ok', result: { status: 'pending' } });
+  turn.end({ outcome: { type: 'reply', message: 'A person will review it.' } });
+  return trace;
+}
+
+const attr = (span: OtlpSpan, key: string): string | undefined =>
+  span.attributes.find((a) => a.key === key)?.value.stringValue;
+
 describe('Trace recorder', () => {
+  it('gives a span that starts after another ended a strictly later start time', () => {
+    // Contiguous by construction, the way the loop opens a tool span right
+    // after the model call span closes; whole-millisecond clocks tied them.
+    const trace = new Trace(traceConfig);
+    const first = trace.startTurnSpan(null, { customerInput: 'a' });
+    first.end({ outcome: { type: 'reply', message: 'a' } });
+    const second = trace.startTurnSpan(null, { customerInput: 'b' });
+    second.end({ outcome: { type: 'reply', message: 'b' } });
+    const [a, b] = trace.end().spans;
+    expect(b!.startedAt).toBeGreaterThan(a!.startedAt + a!.duration);
+  });
+
   it('collects all spans in start order with durations stamped', () => {
     const completed = recordOneConversation().end();
     expect(completed.spans.map((s) => s.kind)).toEqual(['turn', 'model_call', 'tool_execution']);
@@ -97,6 +164,48 @@ describe('Trace recorder', () => {
       vi.stubEnv('NODE_ENV', 'production');
       const completed = recordConversationWithAbandonedTool().end();
       expect(completed.spans.map((s) => s.status)).toEqual(['completed', 'undetermined']);
+    });
+  });
+
+  describe('policy_decision spans', () => {
+    it('records the consultation under the tool span, start fields beside the end fields', () => {
+      const completed = recordOneDecision().end();
+      expect(completed.spans.map((s) => s.kind)).toEqual([
+        'turn',
+        'tool_execution',
+        'policy_decision',
+      ]);
+      const tool = completed.spans[1]!;
+      expect(completed.spans[2]).toMatchObject({
+        kind: 'policy_decision',
+        parentId: tool.id,
+        status: 'completed',
+        configHash: 'cfg-1',
+        request: policyRequest,
+        outcome: 'require_approval',
+        reason: 'cap_exceeded',
+        decision: decisionRecord,
+      });
+    });
+
+    it('a consultation that errors keeps its config and request', () => {
+      const trace = new Trace(traceConfig);
+      const turn = trace.startTurnSpan(null, { customerInput: 'refund' });
+      const decision = trace.startPolicyDecisionSpan(turn.id, {
+        configHash: 'cfg-1',
+        request: policyRequest,
+      });
+      decision.error('decision_failed');
+      turn.end({ outcome: { type: 'failed', reason: 'internal' } });
+      const span = trace.end().spans[1];
+      expect(span).toMatchObject({
+        kind: 'policy_decision',
+        status: 'error',
+        errorType: 'decision_failed',
+        configHash: 'cfg-1',
+        request: policyRequest,
+      });
+      expect(span).not.toHaveProperty('outcome');
     });
   });
 
@@ -172,6 +281,74 @@ describe('OTLP mapper', () => {
     }
   });
 
+  it('emits the policy decision as kept.* attributes and Langfuse panes, under the tool span', () => {
+    const decided = mapTraceToOTLPEnvelope(recordOneDecision().end()).resourceSpans[0]!
+      .scopeSpans[0]!.spans;
+    const tool = decided.find((s) => s.name === 'tool_execution')!;
+    const decision = decided.find((s) => s.name === 'policy_decision')!;
+
+    expect(decision.parentSpanId).toBe(tool.spanId);
+    expect(decision.status.code).toBe(1);
+    expect(attr(decision, 'kept.policy.action')).toBe('issue_refund');
+    expect(attr(decision, 'kept.policy.outcome')).toBe('require_approval');
+    expect(attr(decision, 'kept.policy.reason')).toBe('cap_exceeded');
+    expect(attr(decision, 'kept.policy.config_hash')).toBe('cfg-1');
+    expect(JSON.parse(attr(decision, 'kept.policy.request')!)).toEqual(policyRequest);
+    expect(JSON.parse(attr(decision, 'kept.policy.decision')!)).toEqual(decisionRecord);
+    expect(JSON.parse(attr(decision, 'langfuse.observation.input')!)).toEqual(policyRequest);
+    expect(JSON.parse(attr(decision, 'langfuse.observation.output')!)).toEqual({
+      outcome: 'require_approval',
+      reason: 'cap_exceeded',
+      decision: decisionRecord,
+    });
+    expect(attr(decision, 'langfuse.observation.metadata.outcomeType')).toBe('require_approval');
+    expect(attr(decision, 'langfuse.observation.metadata.outcomeReason')).toBe('cap_exceeded');
+    expect(attr(decision, 'gen_ai.operation.name')).toBeUndefined();
+  });
+
+  it('stamps the policy config hash on every span only when the trace carries one', () => {
+    const key = 'langfuse.trace.metadata.policyConfigHash';
+    const stamped = mapTraceToOTLPEnvelope(
+      recordOneDecision({ ...traceConfig, policyConfigHash: 'cfg-1' }).end(),
+    ).resourceSpans[0]!.scopeSpans[0]!.spans;
+    for (const span of stamped) {
+      expect(attr(span, key)).toBe('cfg-1');
+    }
+    for (const span of spans) {
+      expect(span.attributes.map((a) => a.key)).not.toContain(key);
+    }
+  });
+
+  it('keeps sub-millisecond precision in the nanosecond timestamps', () => {
+    // Langfuse infers the agent graph from timing; a span rounded onto the
+    // millisecond its predecessor ended on reads as parallel to it.
+    const fractional = mapTraceToOTLPEnvelope({
+      ...completed,
+      spans: [{ ...completed.spans[0]!, startedAt: 1_787_184_000_000.25, duration: 0.5 }],
+    }).resourceSpans[0]!.scopeSpans[0]!.spans[0]!;
+    expect(fractional.startTimeUnixNano).toBe('1787184000000250000');
+    expect(fractional.endTimeUnixNano).toBe('1787184000000750000');
+  });
+
+  it('stamps every span with its Langfuse observation type', () => {
+    const typed = mapTraceToOTLPEnvelope(recordOneDecision().end()).resourceSpans[0]!.scopeSpans[0]!
+      .spans;
+    const typeOf = (name: string): string | undefined =>
+      attr(
+        typed.find((s) => s.name === name)!,
+        'langfuse.observation.type',
+      );
+    expect(typeOf('turn')).toBe('agent');
+    expect(typeOf('tool_execution')).toBe('tool');
+    expect(typeOf('policy_decision')).toBe('guardrail');
+    expect(
+      attr(
+        spans.find((s) => s.name === 'model_call')!,
+        'langfuse.observation.type',
+      ),
+    ).toBe('generation');
+  });
+
   it('converts wall-clock milliseconds to nanosecond strings', () => {
     for (const span of spans) {
       const start = BigInt(span.startTimeUnixNano);
@@ -193,6 +370,59 @@ describe('OTLP mapper', () => {
       arguments: { orderNumber: '7' },
     });
     expect(messages[0].parts[0]).not.toHaveProperty('args');
+  });
+
+  it('gives the Langfuse copy of a tool result a `result` key and keeps the OTel copy pure', () => {
+    // A second-round model call: its input carries the tool result the
+    // model was answering. The Langfuse UI reads that text from `result`;
+    // the convention has only `response`.
+    const trace = new Trace(traceConfig);
+    const turn = trace.startTurnSpan(null, { customerInput: 'Where is my order?' });
+    const call = trace.startModelCallSpan(turn.id, {
+      ...modelCallStart,
+      inputMessages: [
+        ...modelCallStart.inputMessages,
+        {
+          role: 'assistant',
+          parts: [
+            { type: 'tool_call', id: 'call_1', name: 'lookup_order', args: { orderNumber: '7' } },
+          ],
+        },
+        {
+          role: 'user',
+          parts: [
+            {
+              type: 'tool_call_response',
+              id: 'call_1',
+              response: '{"status":"shipped"}',
+              status: 'ok',
+            },
+          ],
+        },
+      ],
+    });
+    call.end({ inputTokens: 1, outputTokens: 1, outputMessages: [] });
+    turn.end({ outcome: { type: 'reply', message: 'It shipped.' } });
+
+    const generation = mapTraceToOTLPEnvelope(
+      trace.end(),
+    ).resourceSpans[0]!.scopeSpans[0]!.spans.find((s) => s.name === 'model_call')!;
+    const partsOf = (key: string): unknown[] => {
+      const attribute = generation.attributes.find((a) => a.key === key)!;
+      return JSON.parse(attribute.value.stringValue!)[2].parts;
+    };
+
+    expect(partsOf('langfuse.observation.input')[0]).toEqual({
+      type: 'tool_call_response',
+      id: 'call_1',
+      response: '{"status":"shipped"}',
+      result: '{"status":"shipped"}',
+    });
+    expect(partsOf('gen_ai.input.messages')[0]).toEqual({
+      type: 'tool_call_response',
+      id: 'call_1',
+      response: '{"status":"shipped"}',
+    });
   });
 
   it('emits the turn preview and outcome type', () => {

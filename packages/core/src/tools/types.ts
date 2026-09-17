@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import type { ToolResultState } from '../messages.js';
+import type { PolicyDecisionSpan } from '../tracing/span.js';
+import type { StartPolicyDecisionPayload } from '../tracing/types.js';
 
-export type ToolName = 'lookup_order';
+export type ToolName = 'lookup_order' | 'issue_refund';
 
 export type ToolResult = {
   resultState: ToolResultState;
@@ -18,6 +20,24 @@ export type ToolExecuteContext = {
    * it no longer knows.
    */
   signal: AbortSignal;
+  /**
+   * The conversation this call belongs to: the identity a write tool stamps
+   * on its ledger record. Carried by the loop untouched from the host.
+   */
+  conversationId: string;
+  /**
+   * Hash of the prompt the model was running when it asked for this call,
+   * taken from the model config, so a record can say which prompt decided it.
+   */
+  promptHash: string;
+  /**
+   * Opens a policy_decision span under this call's tool_execution span. A
+   * write tool opens exactly one per consultation of the policy engine,
+   * before the ledger's atomic operation, and ends it on every path. The
+   * loop wires it; a host or test that builds a context by hand supplies
+   * one on a scratch trace.
+   */
+  startPolicyDecisionSpan: (payload: StartPolicyDecisionPayload) => PolicyDecisionSpan;
 };
 
 export type ToolDefinition<TSchema extends z.ZodType> = {

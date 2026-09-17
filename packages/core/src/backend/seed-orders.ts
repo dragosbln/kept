@@ -163,5 +163,37 @@ export function makeDemoOrders(now: number = DEMO_SEED_EPOCH): Order[] {
         },
       ],
     }),
+
+    // Second delivered order for the customer behind order-1002: the
+    // per-customer cap fixture. Every per-order and per-refund check passes
+    // on each order alone (the $89 boot on 1002, the $79 layer here); only
+    // the sum across the two orders crosses a per-customer cap of $150.
+    order({
+      id: 'order-1005',
+      createdAt: now - 20 * DAY,
+      updatedAt: now - 16 * DAY,
+      email: 'sam@example.com',
+      status: 'delivered',
+      currency: 'USD',
+      items: [
+        {
+          id: 'order-1005-line-1',
+          productId: 'baselayer-merino',
+          productName: 'Merino Base Layer',
+          quantity: 1,
+          unitPriceMinorUnits: 7900,
+        },
+      ],
+      shipments: [
+        {
+          id: 'order-1005-shipment-1',
+          carrier: 'UPS',
+          status: 'delivered',
+          carrierStatus: 'Delivered — left at front door',
+          trackingNumber: '1Z999AA10123456791',
+          items: [{ orderItemId: 'order-1005-line-1', quantity: 1 }],
+        },
+      ],
+    }),
   ];
 }

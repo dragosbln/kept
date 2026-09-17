@@ -1,5 +1,10 @@
 import type { z } from 'zod';
-import type { ToolDefinition, ToolRegistry, ToolResult } from '../tools/types.js';
+import type {
+  ToolDefinition,
+  ToolExecuteContext,
+  ToolRegistry,
+  ToolResult,
+} from '../tools/types.js';
 import type { ModelClient } from '../model/client.js';
 import type { Trace } from '../tracing/trace.js';
 import type { Message, ToolArgs } from '../messages.js';
@@ -11,6 +16,10 @@ export type ExecuteToolParams<TSchema extends z.ZodType> = {
   input: unknown;
   callId: string;
   timeoutMs?: number;
+  // Context the tool receives as-is; see ToolExecuteContext for what each is for.
+  conversationId: string;
+  promptHash: string;
+  startPolicyDecisionSpan: ToolExecuteContext['startPolicyDecisionSpan'];
 };
 
 /** A tool call as the model requested it, addressed by name into a registry. */
@@ -18,6 +27,10 @@ export type ExecuteToolCallArgs = {
   callId: string;
   name: string;
   args: ToolArgs;
+  // Context the tool receives as-is; see ToolExecuteContext for what each is for.
+  conversationId: string;
+  promptHash: string;
+  startPolicyDecisionSpan: ToolExecuteContext['startPolicyDecisionSpan'];
 };
 
 /**
@@ -57,6 +70,13 @@ export type RunTurnParams = {
   modelClient: ModelClient;
   tools: ToolRegistry;
   trace: Trace;
+  /**
+   * Identity of the conversation, passed through to every tool of the turn
+   * (see ToolExecuteContext.conversationId). Explicit rather than read off
+   * the trace's sessionId: the loop should not depend on how the host
+   * chooses to name traces.
+   */
+  conversationId: string;
   limits?: Partial<TurnLimits>;
   logger?: TurnLogger;
 };

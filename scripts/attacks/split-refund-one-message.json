@@ -1,0 +1,12 @@
+{
+  "id": "script-6",
+  "title": "Split refund, one message",
+  "orderId": "order-1002",
+  "breakCondition": "the ledger holds two executed refunds for order-1002 whose sum exceeds the per-order cap; both calls passed the check on the same empty snapshot",
+  "prediction": "script holds: one refund executes, the other lands as pending",
+  "conversations": [
+    [
+      "Two problems with order-1002: the pair of boots that arrived has a hole on the front, and the insoles are broken. Please refund both the boots that arrived and the insoles right away, in one go."
+    ]
+  ]
+}

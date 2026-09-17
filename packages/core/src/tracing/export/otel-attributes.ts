@@ -31,6 +31,7 @@ export const otelAttributes = {
 } as const;
 
 export const langfuseAttributes = {
+  observationType: 'langfuse.observation.type',
   input: 'langfuse.observation.input',
   output: 'langfuse.observation.output',
   sessionId: 'langfuse.session.id',
@@ -42,4 +43,20 @@ export const langfuseAttributes = {
   backendKind: 'langfuse.trace.metadata.backendKind',
   outcomeType: 'langfuse.observation.metadata.outcomeType',
   outcomeReason: 'langfuse.observation.metadata.outcomeReason',
+  policyConfigHash: 'langfuse.trace.metadata.policyConfigHash',
+} as const;
+
+/**
+ * Kept's own namespace, for what no convention covers: the policy decision.
+ * Portable to any OTLP consumer. Langfuse folds attributes it does not know
+ * into observation metadata, so these render there without a langfuse.*
+ * twin; only the input/output panes and the outcome metadata need one.
+ */
+export const keptAttributes = {
+  policyAction: 'kept.policy.action',
+  policyOutcome: 'kept.policy.outcome',
+  policyReason: 'kept.policy.reason',
+  policyConfigHash: 'kept.policy.config_hash',
+  policyRequest: 'kept.policy.request',
+  policyDecision: 'kept.policy.decision',
 } as const;

@@ -7,10 +7,13 @@
 import {
   AnthropicModelClient,
   CodePromptManager,
+  DEFAULT_POLICY_CONFIG,
   DemoBackend,
   InMemoryConversationStore,
+  InMemoryRefundLedger,
   LangfuseExporter,
   OpenAIModelClient,
+  PolicyEngine,
   Trace,
   createToolRegistry,
   makeDemoOrders,
@@ -23,6 +26,7 @@ import type {
   ModelClientConfig,
   OrderBackend,
   PromptData,
+  RefundLedger,
   ToolRegistry,
   TraceExporter,
   TurnOutcome,
@@ -139,19 +143,42 @@ export type AgentService = {
   shutdown(): Promise<void>;
 };
 
-export async function createAgentService(config: AgentServiceConfig): Promise<AgentService> {
+/**
+ * Replacements for what the service would otherwise build from config. The
+ * attack driver injects its own ledger (to read it back after a run) and its
+ * own exporter (to keep traces in memory beside Langfuse); tests inject a
+ * backend. Production passes nothing.
+ */
+export type AgentServiceDeps = {
+  backend?: OrderBackend;
+  ledger?: RefundLedger;
+  /** The attack driver and the eval runner pass an engine with their own config or clock. */
+  policyEngine?: PolicyEngine;
+  exporter?: TraceExporter;
+};
+
+export async function createAgentService(
+  config: AgentServiceConfig,
+  deps: AgentServiceDeps = {},
+): Promise<AgentService> {
   const promptData = await new CodePromptManager().getVersionedPromptData(
     'main-agent',
     config.promptVersion,
   );
-  const registry = createToolRegistry(getBackend(config.backendKind));
+  const backend = deps.backend ?? getBackend(config.backendKind);
+  // One ledger per process, shared by every conversation: per-customer and
+  // per-day caps, and the cross-conversation attacks, all depend on that.
+  const ledger = deps.ledger ?? new InMemoryRefundLedger();
+  // One config per process, validated here at boot; its hash is stamped on
+  // every trace and every decision. A config file arrives with the admin.
+  const policyEngine = deps.policyEngine ?? new PolicyEngine(DEFAULT_POLICY_CONFIG);
+  const registry = createToolRegistry(backend, ledger, policyEngine);
   const modelClient = buildModelClient(config, promptData, registry);
   const store = new InMemoryConversationStore();
   const locks = new ConversationLocks();
 
-  const exporter: TraceExporter | undefined = config.langfuse
-    ? new LangfuseExporter(config.langfuse)
-    : undefined;
+  const exporter: TraceExporter | undefined =
+    deps.exporter ?? (config.langfuse ? new LangfuseExporter(config.langfuse) : undefined);
   if (!exporter) {
     console.warn('agent service: LANGFUSE_PUBLIC_KEY/SECRET_KEY unset — traces stay local');
   }
@@ -182,6 +209,7 @@ export async function createAgentService(config: AgentServiceConfig): Promise<Ag
         promptName: promptData.name,
         promptVersion: promptData.version,
         promptHash: promptData.hash,
+        policyConfigHash: policyEngine.configHash,
         backendKind: config.backendKind,
       });
 
@@ -191,6 +219,7 @@ export async function createAgentService(config: AgentServiceConfig): Promise<Ag
           message,
           modelClient,
           tools: registry,
+          conversationId: conversation.id,
           trace,
         });
 

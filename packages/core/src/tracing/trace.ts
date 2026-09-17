@@ -1,7 +1,15 @@
-import { ModelCallSpan, ToolExecutionSpan, TurnSpan, type AnySpan } from './span.js';
+import {
+  ModelCallSpan,
+  PolicyDecisionSpan,
+  ToolExecutionSpan,
+  TurnSpan,
+  type AnySpan,
+  wallClockNow,
+} from './span.js';
 import type {
   CompletedTrace,
   StartModelCallPayload,
+  StartPolicyDecisionPayload,
   StartToolExecutionPayload,
   StartTurnPayload,
   TraceConfig,
@@ -24,7 +32,7 @@ export class Trace {
     this.payload = {
       ...config,
       id: crypto.randomUUID(),
-      startedAt: Date.now(),
+      startedAt: wallClockNow(),
       faultToggles: config.faultToggles ?? [],
     };
     this.startMark = performance.now();
@@ -67,6 +75,17 @@ export class Trace {
   ): ToolExecutionSpan {
     this.guardNotEnded();
     const span = new ToolExecutionSpan(this.payload.id, parentSpanId, payload);
+    this.spans.push(span);
+    return span;
+  }
+
+  /** Parent is the tool_execution span of the call that consulted the engine. */
+  startPolicyDecisionSpan(
+    parentSpanId: string | null,
+    payload: StartPolicyDecisionPayload,
+  ): PolicyDecisionSpan {
+    this.guardNotEnded();
+    const span = new PolicyDecisionSpan(this.payload.id, parentSpanId, payload);
     this.spans.push(span);
     return span;
   }

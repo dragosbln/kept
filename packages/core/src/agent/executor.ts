@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ToolName, ToolRegistry, ToolResult } from '../tools/types.js';
+import { describeError } from '../refunds/execute.js';
 import type { ExecuteToolCallArgs, ExecuteToolParams, SettledToolCall } from './types.js';
 
 export const DEFAULT_TOOL_TIMEOUT_MS = 10_000;
@@ -44,6 +45,9 @@ export async function executeTool<TSchema extends z.ZodType>({
   tool: { inputSchema, execute },
   input,
   callId,
+  conversationId,
+  promptHash,
+  startPolicyDecisionSpan,
   timeoutMs = DEFAULT_TOOL_TIMEOUT_MS,
 }: ExecuteToolParams<TSchema>): Promise<ToolResult> {
   const parsed = inputSchema.safeParse(input);
@@ -59,7 +63,13 @@ export async function executeTool<TSchema extends z.ZodType>({
   const timeout = createTimeout(timeoutMs);
 
   try {
-    const executePromise = execute(parsed.data, { callId, signal: timeout.signal });
+    const executePromise = execute(parsed.data, {
+      callId,
+      signal: timeout.signal,
+      conversationId,
+      promptHash,
+      startPolicyDecisionSpan,
+    });
 
     // A rejection that lands after the race has settled (a tool failing late,
     // after its timeout) must not surface as an unhandled rejection.
@@ -79,10 +89,7 @@ export async function executeTool<TSchema extends z.ZodType>({
   } catch (error) {
     return {
       resultState: 'failed',
-      result:
-        error instanceof Error
-          ? { errorName: error.name, errorMessage: error.message }
-          : { errorMessage: String(error) },
+      result: describeError(error),
       response: 'Tool call failed.',
     };
   } finally {
@@ -92,7 +99,7 @@ export async function executeTool<TSchema extends z.ZodType>({
 
 export async function executeToolCall(
   registry: ToolRegistry,
-  { callId, name, args }: ExecuteToolCallArgs,
+  { callId, name, args, conversationId, promptHash, startPolicyDecisionSpan }: ExecuteToolCallArgs,
   timeoutMs = DEFAULT_TOOL_TIMEOUT_MS,
 ): Promise<SettledToolCall> {
   if (!isRegisteredTool(registry, name)) {
@@ -104,7 +111,15 @@ export async function executeToolCall(
     };
   }
 
-  const result = await executeTool({ tool: registry[name], input: args, callId, timeoutMs });
+  const result = await executeTool({
+    tool: registry[name],
+    input: args,
+    callId,
+    timeoutMs,
+    conversationId,
+    promptHash,
+    startPolicyDecisionSpan,
+  });
 
   return { callId, ...result };
 }

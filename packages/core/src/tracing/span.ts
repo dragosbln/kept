@@ -2,15 +2,19 @@ import type { ErrorType } from '../messages.js';
 import type {
   CompletedSpanPayload,
   EndModelCallPayload,
+  EndPolicyDecisionPayload,
   EndToolExecutionPayload,
   EndTurnPayload,
   ModelCallPayload,
   ModelCallSpanPayload,
+  PolicyDecisionPayload,
+  PolicyDecisionSpanPayload,
   SettledSpanStatus,
   SpanPayload,
   SpanPayloadBase,
   SpanStatus,
   StartModelCallPayload,
+  StartPolicyDecisionPayload,
   StartToolExecutionPayload,
   StartTurnPayload,
   ToolExecutionPayload,
@@ -18,6 +22,19 @@ import type {
   TurnPayload,
   TurnSpanPayload,
 } from './types.js';
+
+/**
+ * Wall-clock time with sub-millisecond precision: the monotonic clock read
+ * against the process's epoch origin. Date.now() is whole milliseconds, and
+ * that was enough to mislead Langfuse's agent graph, which infers steps from
+ * timing: a tool span starting on the same millisecond its model call ended
+ * reads as parallel to it, and two parallel tool calls whose durations round
+ * to zero read as sequential. Spans and traces both stamp from here so the
+ * ordering the loop produced survives into the export.
+ */
+export function wallClockNow(): number {
+  return performance.timeOrigin + performance.now();
+}
 
 /**
  * Lifecycle + payload protocol, written once. The four parameters mirror
@@ -48,7 +65,7 @@ export abstract class SpanBase<
       id: crypto.randomUUID(),
       traceId,
       parentId: parentSpanId,
-      startedAt: Date.now(),
+      startedAt: wallClockNow(),
       status: 'in_progress',
     };
     this.payload = payload;
@@ -148,5 +165,25 @@ export class TurnSpan extends SpanBase<TurnPayload, StartTurnPayload, EndTurnPay
   }
 }
 
+/**
+ * A tool's consultation of the policy engine: opened before the ledger's
+ * atomic operation, ended with its decision, so the duration covers the
+ * read, the decision and the write. error() is for a consultation that never
+ * produced a decision, a throw between open and end.
+ */
+export class PolicyDecisionSpan extends SpanBase<
+  PolicyDecisionPayload,
+  StartPolicyDecisionPayload,
+  EndPolicyDecisionPayload
+> {
+  snapshot(): PolicyDecisionSpanPayload {
+    return {
+      kind: 'policy_decision',
+      ...this.basePayload,
+      ...this.payload,
+    };
+  }
+}
+
 /** Any span handle a Trace can hold — the closed set matching SpanKindPayload. */
-export type AnySpan = ModelCallSpan | ToolExecutionSpan | TurnSpan;
+export type AnySpan = ModelCallSpan | ToolExecutionSpan | TurnSpan | PolicyDecisionSpan;

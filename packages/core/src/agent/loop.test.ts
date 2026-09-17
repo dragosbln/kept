@@ -18,6 +18,9 @@ import { defineTool } from '../tools/utils.js';
 import type { ToolRegistry } from '../tools/types.js';
 import { DemoBackend } from '../backend/demo.js';
 import { makeDemoOrders } from '../backend/seed-orders.js';
+import { InMemoryRefundLedger, customerKeyFor } from '../refund-ledger/index.js';
+import type { PolicyRequest } from '../policy/types.js';
+import { DEFAULT_POLICY_CONFIG, PolicyEngine } from '../policy/index.js';
 import type { ModelClient } from '../model/client.js';
 import type { CallModelResponse, ModelClientConfig } from '../model/types.js';
 import type { Message, ToolArgs } from '../messages.js';
@@ -89,7 +92,11 @@ function toolUse(calls: { id: string; name: string; args: ToolArgs }[]): CallMod
   };
 }
 
-const registry = createToolRegistry(new DemoBackend(makeDemoOrders()));
+const registry = createToolRegistry(
+  new DemoBackend(makeDemoOrders()),
+  new InMemoryRefundLedger(),
+  new PolicyEngine(DEFAULT_POLICY_CONFIG),
+);
 
 type RunReturnType = {
   trace: Trace;
@@ -97,7 +104,7 @@ type RunReturnType = {
   promise: Promise<RunTurnResult>;
 };
 
-type RunOverrides = Partial<Pick<RunTurnParams, 'limits' | 'tools' | 'logger'>>;
+type RunOverrides = Partial<Pick<RunTurnParams, 'limits' | 'tools' | 'logger' | 'conversationId'>>;
 
 function run(script: CallModelResponse[], overrides: RunOverrides = {}): RunReturnType {
   const trace = new Trace(traceConfig);
@@ -108,6 +115,7 @@ function run(script: CallModelResponse[], overrides: RunOverrides = {}): RunRetu
     modelClient,
     tools: registry,
     trace,
+    conversationId: traceConfig.sessionId,
     ...overrides,
   });
   return { trace, modelClient, promise };
@@ -196,6 +204,104 @@ describe('runTurn', () => {
       toolName: 'lookup_order',
       resultState: 'ok',
       parentId: completed.spans[0]!.id, // contained by the turn, not the model call
+    });
+  });
+
+  it('hands every tool the conversation id it was given and the prompt hash from the model config', async () => {
+    // A distinctive id on purpose: a literal in the loop that happens to equal
+    // the fixture's default would pass every other test in this file.
+    const seen: { callId: string; conversationId: string; promptHash: string }[] = [];
+    const spying: ToolRegistry = {
+      lookup_order: defineTool({
+        description: 'spy',
+        inputSchema: z.object({ orderId: z.string() }),
+        execute: async (_input, ctx) => {
+          seen.push({
+            callId: ctx.callId,
+            conversationId: ctx.conversationId,
+            promptHash: ctx.promptHash,
+          });
+          return { resultState: 'ok', result: null, response: 'seen' };
+        },
+      }),
+      issue_refund: registry.issue_refund,
+    };
+
+    await run(
+      [
+        toolUse([
+          { id: 'call-1', name: 'lookup_order', args: { orderId: 'order-1001' } },
+          { id: 'call-2', name: 'lookup_order', args: { orderId: 'order-1002' } },
+        ]),
+        endTurn('Both looked up.'),
+      ],
+      { tools: spying, conversationId: 'conv-threading-9f2' },
+    ).promise;
+
+    expect(seen).toEqual([
+      {
+        callId: 'call-1',
+        conversationId: 'conv-threading-9f2',
+        promptHash: fakeConfig.promptData.hash,
+      },
+      {
+        callId: 'call-2',
+        conversationId: 'conv-threading-9f2',
+        promptHash: fakeConfig.promptData.hash,
+      },
+    ]);
+  });
+
+  it('gives every tool a policy_decision span starter parented by its own tool span', async () => {
+    const request: PolicyRequest = {
+      action: 'issue_refund',
+      customerKey: customerKeyFor({ email: 'sam@example.com' }),
+      orderId: 'order-1002',
+      orderItemId: 'order-1002-line-1',
+      quantity: 1,
+      currency: 'USD',
+      amountMinorUnits: 8900,
+    };
+    const consulting: ToolRegistry = {
+      lookup_order: defineTool({
+        description: 'consults the engine',
+        inputSchema: z.object({ orderId: z.string() }),
+        execute: async (_input, ctx) => {
+          const span = ctx.startPolicyDecisionSpan({ configHash: 'cfg-loop', request });
+          span.end({
+            outcome: 'allow',
+            decision: { configHash: 'cfg-loop', request, eligibility: [], perCap: [] },
+          });
+          return { resultState: 'ok', result: null, response: 'decided' };
+        },
+      }),
+      issue_refund: registry.issue_refund,
+    };
+
+    const { trace, promise } = run(
+      [
+        toolUse([{ id: 'call-1', name: 'lookup_order', args: { orderId: 'order-1001' } }]),
+        endTurn('Done.'),
+      ],
+      { tools: consulting },
+    );
+    await promise;
+
+    const completed = trace.end();
+    expect(spanKinds(completed)).toEqual([
+      'turn',
+      'model_call',
+      'tool_execution',
+      'policy_decision',
+      'model_call',
+    ]);
+    expectAllSpansSettled(completed);
+    const toolSpan = completed.spans.find((span) => span.kind === 'tool_execution')!;
+    expect(completed.spans.find((span) => span.kind === 'policy_decision')).toMatchObject({
+      parentId: toolSpan.id,
+      status: 'completed',
+      outcome: 'allow',
+      configHash: 'cfg-loop',
     });
   });
 
@@ -415,6 +521,7 @@ describe('runTurn', () => {
       message: 'Where is my order?',
       modelClient,
       tools: registry,
+      conversationId: traceConfig.sessionId,
       trace,
     });
 
@@ -437,6 +544,7 @@ describe('runTurn', () => {
       message: 'Where is my order?',
       modelClient: throwingClient,
       tools: registry,
+      conversationId: traceConfig.sessionId,
       trace,
       logger,
     });
@@ -467,6 +575,7 @@ describe('runTurn', () => {
         inputSchema: z.object({ orderId: z.string() }),
         execute: () => new Promise(() => {}),
       }),
+      issue_refund: registry.issue_refund,
     };
     const { trace, promise } = run(
       [

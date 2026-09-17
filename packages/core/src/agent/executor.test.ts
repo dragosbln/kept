@@ -9,18 +9,47 @@ import { z } from 'zod';
 import { executeToolCall } from './executor.js';
 import { defineTool } from '../tools/utils.js';
 import type { ToolRegistry } from '../tools/types.js';
+import { Trace } from '../tracing/trace.js';
+import type { StartPolicyDecisionPayload } from '../tracing/types.js';
 
 const schema = z.object({ orderId: z.string().trim() });
 
 type Execute = Parameters<typeof defineTool<typeof schema>>[0]['execute'];
 
+/** The registry type requires every tool; these tests only ever dispatch lookup_order. */
+const unreachableRefund = defineTool({
+  description: 'must not run',
+  inputSchema: z.object({}),
+  execute: async () => {
+    throw new Error('executor tests never refund');
+  },
+});
+
 function registryWith(execute: Execute): ToolRegistry {
   return {
     lookup_order: defineTool({ description: 'test tool', inputSchema: schema, execute }),
+    issue_refund: unreachableRefund,
   };
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Turn context every call carries; distinctive so a leak into output is visible. */
+const scratchTrace = (): Trace =>
+  new Trace({
+    sessionId: 'scratch',
+    providerName: 'anthropic',
+    promptName: 'main-agent',
+    promptVersion: '0',
+    promptHash: 'scratch',
+    backendKind: 'demo',
+  });
+const context = {
+  conversationId: 'conv-executor-test',
+  promptHash: 'hash-executor-test',
+  startPolicyDecisionSpan: (payload: StartPolicyDecisionPayload) =>
+    scratchTrace().startPolicyDecisionSpan(null, payload),
+};
 
 describe('executeToolCall', () => {
   it('runs the tool with the parsed input and stamps the callId once', async () => {
@@ -33,6 +62,7 @@ describe('executeToolCall', () => {
     const settled = await executeToolCall(registry, {
       callId: 'call-1',
       name: 'lookup_order',
+      ...context,
       args: { orderId: '  order-7  ' },
     });
 
@@ -46,6 +76,25 @@ describe('executeToolCall', () => {
     });
   });
 
+  it('forwards the conversation id and prompt hash to the tool unchanged', async () => {
+    let received: { conversationId: string; promptHash: string } | undefined;
+    const registry = registryWith(async (_input, ctx) => {
+      received = { conversationId: ctx.conversationId, promptHash: ctx.promptHash };
+      return { resultState: 'ok', result: null, response: 'done' };
+    });
+
+    await executeToolCall(registry, {
+      callId: 'call-ctx',
+      name: 'lookup_order',
+      conversationId: 'conv-distinct',
+      promptHash: 'hash-distinct',
+      startPolicyDecisionSpan: context.startPolicyDecisionSpan,
+      args: { orderId: 'order-7' },
+    });
+
+    expect(received).toEqual({ conversationId: 'conv-distinct', promptHash: 'hash-distinct' });
+  });
+
   it('settles invalid input as failed without running the tool, with a legible response', async () => {
     let toolRan = false;
     const registry = registryWith(async () => {
@@ -56,6 +105,7 @@ describe('executeToolCall', () => {
     const settled = await executeToolCall(registry, {
       callId: 'call-2',
       name: 'lookup_order',
+      ...context,
       args: { orderId: 42 },
     });
 
@@ -76,6 +126,7 @@ describe('executeToolCall', () => {
     const settled = await executeToolCall(registry, {
       callId: 'call-3',
       name: 'lookup_order',
+      ...context,
       args: { orderId: 'order-7' },
     });
 
@@ -92,6 +143,7 @@ describe('executeToolCall', () => {
     const settled = await executeToolCall(registry, {
       callId: 'call-4',
       name: 'lookup_order',
+      ...context,
       args: { orderId: 'order-7' },
     });
 
@@ -106,7 +158,7 @@ describe('executeToolCall', () => {
 
     const settled = await executeToolCall(
       registry,
-      { callId: 'call-5', name: 'lookup_order', args: { orderId: 'order-7' } },
+      { callId: 'call-5', name: 'lookup_order', ...context, args: { orderId: 'order-7' } },
       15,
     );
 
@@ -125,7 +177,7 @@ describe('executeToolCall', () => {
 
     const settled = await executeToolCall(
       registry,
-      { callId: 'call-6', name: 'lookup_order', args: { orderId: 'order-7' } },
+      { callId: 'call-6', name: 'lookup_order', ...context, args: { orderId: 'order-7' } },
       10,
     );
     expect(settled.resultState).toBe('unknown');
@@ -143,6 +195,7 @@ describe('executeToolCall', () => {
     const settled = await executeToolCall(registry, {
       callId: 'call-7',
       name: 'get_time',
+      ...context,
       args: {},
     });
 
@@ -159,6 +212,7 @@ describe('executeToolCall', () => {
     const settled = await executeToolCall(registry, {
       callId: 'call-8',
       name: 'toString',
+      ...context,
       args: {},
     });
 
@@ -174,7 +228,7 @@ describe('executeToolCall', () => {
 
     const settled = await executeToolCall(
       registry,
-      { callId: 'call-9', name: 'lookup_order', args: { orderId: 'order-7' } },
+      { callId: 'call-9', name: 'lookup_order', ...context, args: { orderId: 'order-7' } },
       15,
     );
 
@@ -192,6 +246,7 @@ describe('executeToolCall', () => {
     await executeToolCall(registry, {
       callId: 'call-10',
       name: 'lookup_order',
+      ...context,
       args: { orderId: 'order-7' },
     });
 

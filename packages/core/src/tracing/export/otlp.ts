@@ -5,7 +5,7 @@
 
 import type { Message, MessageRole, ToolArgs } from '../../messages.js';
 import type { CompletedSpanPayload, CompletedTrace, SpanKind, TurnSpanPayload } from '../types.js';
-import { langfuseAttributes, otelAttributes } from './otel-attributes.js';
+import { keptAttributes, langfuseAttributes, otelAttributes } from './otel-attributes.js';
 
 const SERVICE_NAME = 'kept-agent';
 const INSTRUMENTATION_SCOPE = 'kept-tracing';
@@ -58,6 +58,8 @@ function mapOperationName(spanKind: SpanKind): 'chat' | 'execute_tool' | null {
     case 'tool_execution':
       return 'execute_tool';
     case 'turn':
+    case 'policy_decision':
+      // No GenAI operation covers either; the span name carries the kind.
       return null;
     default:
       spanKind satisfies never;
@@ -65,8 +67,38 @@ function mapOperationName(spanKind: SpanKind): 'chat' | 'execute_tool' | null {
   }
 }
 
+/**
+ * Keeps the sub-millisecond part: whole milliseconds go through BigInt
+ * exactly, the fraction is rounded to nanoseconds on its own. Rounding the
+ * input to milliseconds first put contiguous spans on the same instant and
+ * broke the agent graph; see wallClockNow.
+ */
 function millisecondsToNanoStr(input: number): string {
-  return (BigInt(Math.round(input)) * BigInt(1e6)).toString();
+  const wholeMs = Math.floor(input);
+  const fractionNs = Math.round((input - wholeMs) * 1e6);
+  return (BigInt(wholeMs) * 1_000_000n + BigInt(fractionNs)).toString();
+}
+
+/**
+ * Langfuse's own classification, emitted explicitly because an explicit
+ * type always wins over its inference from gen_ai.* attributes. The turn is
+ * the agent, the policy decision is a guardrail; those two would otherwise
+ * be plain spans.
+ */
+function mapObservationType(spanKind: SpanKind): 'agent' | 'generation' | 'tool' | 'guardrail' {
+  switch (spanKind) {
+    case 'turn':
+      return 'agent';
+    case 'model_call':
+      return 'generation';
+    case 'tool_execution':
+      return 'tool';
+    case 'policy_decision':
+      return 'guardrail';
+    default:
+      spanKind satisfies never;
+      return 'agent';
+  }
 }
 
 function getOtlpStatus(span: CompletedSpanPayload): OtlpStatus {
@@ -90,7 +122,7 @@ function toOtlpSpanId(id: string): string {
 type OtlpMessagePart =
   | { type: 'text'; content: string }
   | { type: 'tool_call'; id: string; name: string; arguments: ToolArgs }
-  | { type: 'tool_call_response'; id: string; response: string };
+  | { type: 'tool_call_response'; id: string; response: string; result?: string };
 
 type OtlpMessage = {
   role: MessageRole;
@@ -98,7 +130,22 @@ type OtlpMessage = {
   parts: OtlpMessagePart[];
 };
 
-function toOtlpMessages(messages: Message[]): OtlpMessage[] {
+/**
+ * Which consumer the messages are for. `otel` is the convention shape,
+ * untouched. `langfuse` is the same shape plus what the Langfuse UI needs
+ * to render it. Langfuse v4's formatted view routes `parts`-shaped messages
+ * through its pydantic-ai adapter (the first of its adapters whose
+ * structural check they pass), which turns a user message holding tool
+ * results into `tool` messages and reads each one's text from `result`,
+ * never from the convention's `response`; without it the UI shows an empty
+ * Tool block. The dual-emit rule exists for exactly this: the portable
+ * attribute stays pure, the product attribute gets the extra key. Read off
+ * the running bundle on 2026-09-11; revisit if a Langfuse upgrade changes
+ * the rendering.
+ */
+type MessageTarget = 'otel' | 'langfuse';
+
+function toOtlpMessages(messages: Message[], target: MessageTarget = 'otel'): OtlpMessage[] {
   return messages.map((message) => ({
     role: message.role,
     finish_reason: message.finishReason,
@@ -129,6 +176,7 @@ function toOtlpMessages(messages: Message[]): OtlpMessage[] {
               type: part.type,
               id: part.id,
               response: part.response,
+              ...(target === 'langfuse' ? { result: part.response } : {}),
             },
           ];
         default:
@@ -164,8 +212,10 @@ function mapSpanAttributes(trace: CompletedTrace, span: CompletedSpanPayload): O
     str(langfuseAttributes.faultToggles, JSON.stringify(trace.faultToggles)),
     str(langfuseAttributes.backendKind, trace.backendKind),
     str(langfuseAttributes.promptHash, trace.promptHash),
+    str(langfuseAttributes.policyConfigHash, trace.policyConfigHash),
     str(otelAttributes.sessionId, trace.sessionId),
     str(otelAttributes.errorType, span.errorType),
+    str(langfuseAttributes.observationType, mapObservationType(span.kind)),
   ];
 
   const operationName = mapOperationName(span.kind);
@@ -187,14 +237,18 @@ function mapSpanAttributes(trace: CompletedTrace, span: CompletedSpanPayload): O
       const outputMessages = span.outputMessages
         ? JSON.stringify(toOtlpMessages(span.outputMessages))
         : undefined;
+      const inputForLangfuse = JSON.stringify(toOtlpMessages(span.inputMessages, 'langfuse'));
+      const outputForLangfuse = span.outputMessages
+        ? JSON.stringify(toOtlpMessages(span.outputMessages, 'langfuse'))
+        : undefined;
       return [
         ...attributes,
         str(otelAttributes.model, span.model),
         str(otelAttributes.providerName, span.providerName),
         int(otelAttributes.inputTokens, span.inputTokens),
         int(otelAttributes.outputTokens, span.outputTokens),
-        str(langfuseAttributes.input, inputMessages),
-        str(langfuseAttributes.output, outputMessages),
+        str(langfuseAttributes.input, inputForLangfuse),
+        str(langfuseAttributes.output, outputForLangfuse),
         str(otelAttributes.inputMessages, inputMessages),
         str(otelAttributes.outputMessages, outputMessages),
         str(langfuseAttributes.promptName, span.promptName),
@@ -215,6 +269,32 @@ function mapSpanAttributes(trace: CompletedTrace, span: CompletedSpanPayload): O
         str(otelAttributes.toolResult, result),
         str(langfuseAttributes.output, result),
         str(langfuseAttributes.resultState, span.resultState),
+      ];
+    }
+    case 'policy_decision': {
+      // The request is the input pane; the verdict with its record is the
+      // output pane. kept.* carries the same facts for any other consumer,
+      // with the decision record kept pure of the span-level outcome.
+      const request = JSON.stringify(span.request);
+      const verdict =
+        span.outcome === undefined
+          ? undefined
+          : JSON.stringify({ outcome: span.outcome, reason: span.reason, decision: span.decision });
+      return [
+        ...attributes,
+        str(keptAttributes.policyAction, span.request.action),
+        str(keptAttributes.policyConfigHash, span.configHash),
+        str(keptAttributes.policyOutcome, span.outcome),
+        str(keptAttributes.policyReason, span.reason),
+        str(keptAttributes.policyRequest, request),
+        str(
+          keptAttributes.policyDecision,
+          span.decision ? JSON.stringify(span.decision) : undefined,
+        ),
+        str(langfuseAttributes.input, request),
+        str(langfuseAttributes.output, verdict),
+        str(langfuseAttributes.outcomeType, span.outcome),
+        str(langfuseAttributes.outcomeReason, span.reason),
       ];
     }
     default:

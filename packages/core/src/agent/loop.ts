@@ -27,6 +27,9 @@
 // - Single-flight: the caller holds the conversation lock and the loop awaits
 //   each step, so no two events overlap inside a turn.
 // - The loop never speaks HTTP and never ends the trace; the host does both.
+// - The conversation id and the prompt hash reach every tool untouched; the
+//   loop carries them for write tools to stamp on their records and never
+//   reads them itself.
 
 import type { Message, MessagePart, ToolCallPart } from '../messages.js';
 import type { ModelClient } from '../model/client.js';
@@ -66,6 +69,7 @@ type LoopContext = {
   trace: Trace;
   turnSpanId: string;
   limits: TurnLimits;
+  conversationId: string;
 };
 
 /** One customer message in, one outcome out. The module comment has the state machine. */
@@ -75,6 +79,7 @@ export async function runTurn({
   modelClient,
   tools,
   trace,
+  conversationId,
   limits = {},
   logger = console,
 }: RunTurnParams): Promise<RunTurnResult> {
@@ -95,6 +100,7 @@ export async function runTurn({
       tools,
       trace,
       turnSpanId: turnSpan.id,
+      conversationId,
       limits: { ...DEFAULT_TURN_LIMITS, ...limits },
     });
   } catch (error) {
@@ -276,7 +282,15 @@ async function tracedToolCall(part: ToolCallPart, ctx: LoopContext): Promise<Set
 
   const settled = await executeToolCall(
     ctx.tools,
-    { callId: part.id, name: part.name, args: part.args },
+    {
+      callId: part.id,
+      name: part.name,
+      args: part.args,
+      promptHash: ctx.modelConfig.promptData.hash,
+      conversationId: ctx.conversationId,
+      // Decision spans nest under this call's span, not under the turn.
+      startPolicyDecisionSpan: (payload) => ctx.trace.startPolicyDecisionSpan(span.id, payload),
+    },
     ctx.limits.toolTimeoutMs,
   );
 

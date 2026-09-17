@@ -15,12 +15,35 @@ import {
 } from './client.contract.js';
 import { toModelToolRegistry } from './utils.js';
 import { createToolRegistry } from '../tools/registry.js';
+import { DEFAULT_POLICY_CONFIG, PolicyEngine } from '../policy/index.js';
 import type { ModelClientConfig } from './types.js';
 import type { Message } from '../messages.js';
 import type { OrderBackend } from '../backend/order-backend.js';
+import type { RefundLedger } from '../refund-ledger/index.js';
 
 const unreachableBackend: OrderBackend = {
   findOrder: () => {
+    throw new Error('model-client tests must never execute tools');
+  },
+  issueRefund: () => {
+    throw new Error('model-client tests must never execute tools');
+  },
+};
+
+const unreachableLedger: RefundLedger = {
+  recordRefund: () => {
+    throw new Error('model-client tests must never execute tools');
+  },
+  settleRefundRecord: () => {
+    throw new Error('model-client tests must never execute tools');
+  },
+  updateRefundRecordStatus: () => {
+    throw new Error('model-client tests must never execute tools');
+  },
+  findRecord: () => {
+    throw new Error('model-client tests must never execute tools');
+  },
+  list: () => {
     throw new Error('model-client tests must never execute tools');
   },
 };
@@ -35,7 +58,13 @@ const config: ModelClientConfig = {
     hash: 'cafebabe',
     text: 'You are a post-purchase support agent.',
   },
-  toolRegistry: toModelToolRegistry(createToolRegistry(unreachableBackend)),
+  toolRegistry: toModelToolRegistry(
+    createToolRegistry(
+      unreachableBackend,
+      unreachableLedger,
+      new PolicyEngine(DEFAULT_POLICY_CONFIG),
+    ),
+  ),
 };
 
 // --- Wire fixtures ----------------------------------------------------------
@@ -143,7 +172,8 @@ describe('AnthropicModelClient request shape', () => {
     const { client, body } = makeCapturingClient();
     await client.callModel(contractCustomerTurn);
     const tools = body()['tools'] as Record<string, unknown>[];
-    expect(tools).toHaveLength(1);
+    // One definition per registry entry, in registry order.
+    expect(tools.map((tool) => tool['name'])).toEqual(['lookup_order', 'issue_refund']);
     // toEqual is exact on keys: a leaked camelCase `inputSchema` (or any
     // other stray field) fails this test.
     expect(tools[0]).toEqual({
@@ -232,6 +262,26 @@ describe('AnthropicModelClient request shape', () => {
     await client.callModel(history);
     const messages = body()['messages'] as { content: { is_error: boolean }[] }[];
     expect(messages[0]!.content[0]!.is_error).toBe(true);
+  });
+
+  it('does not mark unknown tool results as errors: the flag invites the retry the text forbids', async () => {
+    const history: Message[] = [
+      {
+        role: 'user',
+        parts: [
+          {
+            type: 'tool_call_response',
+            id: 'call-10',
+            response: 'Refund state unknown; it may have been issued. Do not retry.',
+            status: 'unknown',
+          },
+        ],
+      },
+    ];
+    const { client, body } = makeCapturingClient();
+    await client.callModel(history);
+    const messages = body()['messages'] as { content: { is_error: boolean }[] }[];
+    expect(messages[0]!.content[0]!.is_error).toBe(false);
   });
 
   it('surfaces an illegal role in history as transport_error, not a throw', async () => {
