@@ -1,6 +1,6 @@
 import type { Message } from '../messages.js';
 import type { ConversationStore } from './conversation-store.js';
-import type { Conversation } from './types.js';
+import type { Conversation, ConversationTakeover } from './types.js';
 
 export class InMemoryConversationStore implements ConversationStore {
   private conversations: Conversation[];
@@ -36,6 +36,15 @@ export class InMemoryConversationStore implements ConversationStore {
       throw new Error(`Conversation with id ${id} doesn't exist`);
     }
     this.conversations[conversationIndex]!.messages = [...updatedHistory];
+    return this.copyOut(this.conversations[conversationIndex]!);
+  }
+
+  async markTakeOver(id: string, takeOver: ConversationTakeover): Promise<Conversation> {
+    const conversationIndex = this.conversations.findIndex((conv) => conv.id === id);
+    if (conversationIndex === -1) {
+      throw new Error(`Conversation with id ${id} doesn't exist`);
+    }
+    this.conversations[conversationIndex]!.takeOver = { ...takeOver };
     return this.copyOut(this.conversations[conversationIndex]!);
   }
 }

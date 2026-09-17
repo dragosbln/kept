@@ -106,4 +106,15 @@ describe('InMemoryConversationStore', () => {
     const found = await store.findConversation('conv-1');
     expect(found?.messages).toEqual([userMessage('Where is my order?')]);
   });
+  it('marks a take-over and keeps it through later history updates', async () => {
+    const store = new InMemoryConversationStore();
+    const { id } = await store.createNewConversation();
+    const marked = await store.markTakeOver(id, { takenOverAt: 1, actor: 'dragos' });
+    expect(marked.takeOver).toEqual({ takenOverAt: 1, actor: 'dragos' });
+    const updated = await store.updateConversationHistory(id, [
+      { role: 'user', parts: [{ type: 'text', content: 'still here' }] },
+    ]);
+    expect(updated.takeOver).toEqual({ takenOverAt: 1, actor: 'dragos' });
+    await expect(store.markTakeOver('nope', { takenOverAt: 1, actor: 'x' })).rejects.toThrow();
+  });
 });
