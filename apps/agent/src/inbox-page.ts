@@ -77,7 +77,17 @@ export const INBOX_PAGE_HTML = `<!doctype html>
 </main>
 <script>
 (function () {
-  var state = { selectedId: null, flash: null };
+  var state = { selectedId: null, flash: null, rendered: {} };
+
+  // Re-render a region only when what it shows has changed. The page polls
+  // every five seconds, and replacing innerHTML with identical content
+  // still reset every scroll position inside it, so a conversation being
+  // read jumped back to the top on each tick.
+  function renderIfChanged(name, key, render) {
+    if (state.rendered[name] === key) return;
+    state.rendered[name] = key;
+    render();
+  }
   var actorInput = document.getElementById('actor');
   try { actorInput.value = localStorage.getItem('kept.actor') || ''; } catch (e) {}
   actorInput.addEventListener('change', function () { try { localStorage.setItem('kept.actor', actorInput.value); } catch (e) {} });
@@ -153,39 +163,85 @@ export const INBOX_PAGE_HTML = `<!doctype html>
     return '<div class="transcript">' + html + '</div>';
   }
 
+  var DETAIL_REGIONS = ['d-flash', 'd-head', 'd-actions', 'd-caps', 'd-transcript', 'd-history'];
+
+  // The detail panel is six regions, each re-rendered only when its own
+  // data changes, so the conversation box keeps its DOM node, and its scroll
+  // position, while a flash appears, a status changes or the history grows.
+  // The transcript itself rebuilds only when the messages change, and then
+  // restores the reader's place.
   function renderDetail(detail) {
     var el = document.getElementById('detail');
-    if (!detail) { el.innerHTML = '<div class="empty">Select a request.</div>'; return; }
+    if (!detail) {
+      if (el.getAttribute('data-record')) { el.removeAttribute('data-record'); DETAIL_REGIONS.forEach(function (n) { delete state.rendered[n]; }); }
+      renderIfChanged('d-empty', 'empty', function () { el.innerHTML = '<div class="empty">Select a request.</div>'; });
+      return;
+    }
+    delete state.rendered['d-empty'];
     var r = detail.record, d = r.decisionRecord, conv = detail.conversation;
     var canDecide = r.status === 'pending';
     var canReconcile = r.status === 'unknown' || r.status === 'attempted';
-    var takenOver = conv && conv.takeOver;
-    el.innerHTML =
-      (state.flash ? '<div class="flash' + (state.flash.bad ? ' bad' : '') + '">' + esc(state.flash.text) + '</div>' : '') +
-      '<h2>Refund request ' + badge(r.status) + '</h2>' +
-      '<dl class="kv">' +
-        '<dt>Order</dt><dd>' + esc(r.orderId) + ' · ' + esc(r.orderItemId) + ' × ' + r.quantity + '</dd>' +
-        '<dt>Amount</dt><dd>' + money(r.amountMinorUnits, r.currency) + (r.refundedAmountMinorUnits != null ? ' (moved ' + money(r.refundedAmountMinorUnits, r.refundedAmountCurrency || r.currency) + ')' : '') + '</dd>' +
-        '<dt>Decision</dt><dd>' + esc(d.outcome) + (d.reason ? ' · ' + esc(d.reason) : '') + '</dd>' +
-        '<dt>Requested</dt><dd>' + esc(when(r.createdAt)) + '</dd>' +
-        '<dt>Record</dt><dd class="mono">' + esc(r.id) + '</dd>' +
-        '<dt>Conversation</dt><dd class="mono">' + esc(r.conversationId) + (takenOver ? ' · taken over by ' + esc(conv.takeOver.actor) : '') + '</dd>' +
-        '<dt>Prompt hash</dt><dd class="mono">' + esc(r.promptHash.slice(0, 16)) + '…</dd>' +
-        '<dt>Policy config</dt><dd class="mono">' + esc(d.record.configHash.slice(0, 16)) + '…</dd>' +
-      '</dl>' +
-      '<div class="actions">' +
-        '<button class="primary" data-action="approve"' + (canDecide ? '' : ' disabled') + '>Approve and refund</button>' +
-        '<button class="danger" data-action="deny"' + (canDecide ? '' : ' disabled') + '>Deny</button>' +
-        '<button data-action="reconcile"' + (canReconcile ? '' : ' disabled') + '>Reconcile with backend</button>' +
-        '<button data-action="take-over"' + (takenOver || !conv ? ' disabled' : '') + '>Take over conversation</button>' +
-      '</div>' +
-      '<h2>Caps math</h2>' + capsTable(d.record.perCap) +
-      (d.record.eligibility.length ? '<h2 style="margin-top:14px">Eligibility</h2><table>' + d.record.eligibility.map(function (v) { return '<tr><td>' + esc(v.ruleKind) + '</td><td>' + (v.passed ? badge('ok') + ' passed' : badge('denied') + ' ' + esc(v.reason)) + '</td></tr>'; }).join('') + '</table>' : '') +
-      '<h2 style="margin-top:14px">Conversation</h2>' + transcript(conv) +
-      '<h2 style="margin-top:14px">History for this record</h2>' +
-      (detail.auditEntries.length ? '<table>' + detail.auditEntries.map(function (e) { return '<tr><td>' + esc(when(e.createdAt)) + '</td><td>' + esc(e.actor) + '</td><td>' + esc(e.action) + '</td><td>' + esc(e.statusBefore) + ' → ' + esc(e.statusAfter) + '</td></tr>'; }).join('') + '</table>' : '<div class="empty">No human action yet.</div>');
-    Array.prototype.forEach.call(el.querySelectorAll('button[data-action]'), function (btn) {
-      btn.addEventListener('click', function () { act(btn.getAttribute('data-action'), r, conv); });
+    var takenOver = !!(conv && conv.takeOver);
+
+    if (el.getAttribute('data-record') !== r.id) {
+      el.setAttribute('data-record', r.id);
+      el.innerHTML = DETAIL_REGIONS.map(function (n) { return '<div id="' + n + '"></div>'; }).join('');
+      DETAIL_REGIONS.forEach(function (n) { delete state.rendered[n]; });
+    }
+    var region = function (n) { return document.getElementById(n); };
+
+    renderIfChanged('d-flash', JSON.stringify(state.flash), function () {
+      region('d-flash').innerHTML = state.flash ? '<div class="flash' + (state.flash.bad ? ' bad' : '') + '">' + esc(state.flash.text) + '</div>' : '';
+    });
+
+    renderIfChanged('d-head', JSON.stringify([r, takenOver && conv.takeOver]), function () {
+      region('d-head').innerHTML =
+        '<h2>Refund request ' + badge(r.status) + '</h2>' +
+        '<dl class="kv">' +
+          '<dt>Order</dt><dd>' + esc(r.orderId) + ' · ' + esc(r.orderItemId) + ' × ' + r.quantity + '</dd>' +
+          '<dt>Amount</dt><dd>' + money(r.amountMinorUnits, r.currency) + (r.refundedAmountMinorUnits != null ? ' (moved ' + money(r.refundedAmountMinorUnits, r.refundedAmountCurrency || r.currency) + ')' : '') + '</dd>' +
+          '<dt>Decision</dt><dd>' + esc(d.outcome) + (d.reason ? ' · ' + esc(d.reason) : '') + '</dd>' +
+          '<dt>Requested</dt><dd>' + esc(when(r.createdAt)) + '</dd>' +
+          '<dt>Record</dt><dd class="mono">' + esc(r.id) + '</dd>' +
+          '<dt>Conversation</dt><dd class="mono">' + esc(r.conversationId) + (takenOver ? ' · taken over by ' + esc(conv.takeOver.actor) : '') + '</dd>' +
+          '<dt>Prompt hash</dt><dd class="mono">' + esc(r.promptHash.slice(0, 16)) + '…</dd>' +
+          '<dt>Policy config</dt><dd class="mono">' + esc(d.record.configHash.slice(0, 16)) + '…</dd>' +
+        '</dl>';
+    });
+
+    renderIfChanged('d-actions', JSON.stringify([r.status, takenOver, !!conv]), function () {
+      var box = region('d-actions');
+      box.innerHTML =
+        '<div class="actions">' +
+          '<button class="primary" data-action="approve"' + (canDecide ? '' : ' disabled') + '>Approve and refund</button>' +
+          '<button class="danger" data-action="deny"' + (canDecide ? '' : ' disabled') + '>Deny</button>' +
+          '<button data-action="reconcile"' + (canReconcile ? '' : ' disabled') + '>Reconcile with backend</button>' +
+          '<button data-action="take-over"' + (takenOver || !conv ? ' disabled' : '') + '>Take over conversation</button>' +
+        '</div>';
+      Array.prototype.forEach.call(box.querySelectorAll('button[data-action]'), function (btn) {
+        btn.addEventListener('click', function () { act(btn.getAttribute('data-action'), r, conv); });
+      });
+    });
+
+    renderIfChanged('d-caps', JSON.stringify(d.record), function () {
+      region('d-caps').innerHTML =
+        '<h2>Caps math</h2>' + capsTable(d.record.perCap) +
+        (d.record.eligibility.length ? '<h2 style="margin-top:14px">Eligibility</h2><table>' + d.record.eligibility.map(function (v) { return '<tr><td>' + esc(v.ruleKind) + '</td><td>' + (v.passed ? badge('ok') + ' passed' : badge('denied') + ' ' + esc(v.reason)) + '</td></tr>'; }).join('') + '</table>' : '');
+    });
+
+    renderIfChanged('d-transcript', JSON.stringify(conv && conv.messages), function () {
+      var box = region('d-transcript');
+      var previous = box.querySelector('.transcript');
+      var scrollTop = previous ? previous.scrollTop : 0;
+      box.innerHTML = '<h2 style="margin-top:14px">Conversation</h2>' + transcript(conv);
+      var current = box.querySelector('.transcript');
+      if (current) current.scrollTop = scrollTop;
+    });
+
+    renderIfChanged('d-history', JSON.stringify(detail.auditEntries), function () {
+      region('d-history').innerHTML =
+        '<h2 style="margin-top:14px">History for this record</h2>' +
+        (detail.auditEntries.length ? '<table>' + detail.auditEntries.map(function (e) { return '<tr><td>' + esc(when(e.createdAt)) + '</td><td>' + esc(e.actor) + '</td><td>' + esc(e.action) + '</td><td>' + esc(e.statusBefore) + ' → ' + esc(e.statusAfter) + '</td></tr>'; }).join('') + '</table>' : '<div class="empty">No human action yet.</div>');
     });
   }
 
@@ -214,11 +270,13 @@ export const INBOX_PAGE_HTML = `<!doctype html>
       state.selectedId ? api('/inbox/refunds/' + encodeURIComponent(state.selectedId)) : Promise.resolve(null),
     ]).then(function (results) {
       var pending = results[0].json.items, needing = results[1].json.items, audit = results[2].json.entries;
-      renderList('pending', pending, 'Nothing waiting for approval.');
-      renderList('reconcile', needing, 'Nothing to reconcile.');
-      renderAudit(audit);
+      var detail = results[3] && results[3].ok ? results[3].json : null;
+      var selection = String(state.selectedId);
+      renderIfChanged('pending', selection + JSON.stringify(pending), function () { renderList('pending', pending, 'Nothing waiting for approval.'); });
+      renderIfChanged('reconcile', selection + JSON.stringify(needing), function () { renderList('reconcile', needing, 'Nothing to reconcile.'); });
+      renderIfChanged('audit', JSON.stringify(audit), function () { renderAudit(audit); });
       document.getElementById('counts').textContent = pending.length + ' pending · ' + needing.length + ' to reconcile';
-      renderDetail(results[3] && results[3].ok ? results[3].json : null);
+      renderDetail(detail); // diffs its own regions
     });
   }
 
