@@ -9,19 +9,25 @@ import {
   CodePromptManager,
   DEFAULT_POLICY_CONFIG,
   DemoBackend,
+  InMemoryAuditLog,
   InMemoryConversationStore,
   InMemoryRefundLedger,
   LangfuseExporter,
   OpenAIModelClient,
   PolicyEngine,
   Trace,
+  InboxService,
   createToolRegistry,
   makeDemoOrders,
   runTurn,
   toModelToolRegistry,
 } from '@kept-hq/core';
 import type {
+  AuditLog,
   BackendKind,
+  ConversationStore,
+  InboxActions,
+  Message,
   ModelClient,
   ModelClientConfig,
   OrderBackend,
@@ -139,9 +145,19 @@ export type HandleMessageResult =
 
 export type AgentService = {
   handleNewMessage(message: string, conversationId?: string): Promise<HandleMessageResult>;
+  /** The approval inbox over this process's ledger, store and backend. */
+  inbox: InboxActions;
   /** Drain pending trace exports; call before process exit. */
   shutdown(): Promise<void>;
 };
+
+/**
+ * What a customer hears once a human has taken the conversation over. The
+ * model is not called: the turn is recorded in the history so the human
+ * sees it, and traced so the conversation stays one trace.
+ */
+export const HANDOFF_REPLY =
+  'A member of our support team has taken over this conversation and will follow up with you directly. Nothing more is needed from you here.';
 
 /**
  * Replacements for what the service would otherwise build from config. The
@@ -152,6 +168,8 @@ export type AgentService = {
 export type AgentServiceDeps = {
   backend?: OrderBackend;
   ledger?: RefundLedger;
+  store?: ConversationStore;
+  auditLog?: AuditLog;
   /** The attack driver and the eval runner pass an engine with their own config or clock. */
   policyEngine?: PolicyEngine;
   exporter?: TraceExporter;
@@ -174,7 +192,9 @@ export async function createAgentService(
   const policyEngine = deps.policyEngine ?? new PolicyEngine(DEFAULT_POLICY_CONFIG);
   const registry = createToolRegistry(backend, ledger, policyEngine);
   const modelClient = buildModelClient(config, promptData, registry);
-  const store = new InMemoryConversationStore();
+  const store = deps.store ?? new InMemoryConversationStore();
+  const auditLog = deps.auditLog ?? new InMemoryAuditLog();
+  const inbox = new InboxService({ ledger, backend, store, audit: auditLog });
   const locks = new ConversationLocks();
 
   const exporter: TraceExporter | undefined =
@@ -213,6 +233,22 @@ export async function createAgentService(
         backendKind: config.backendKind,
       });
 
+      // Taken over: the customer's message is kept for the human, the
+      // deferral is the reply, the model is never asked.
+      if (conversation.takeOver) {
+        const turn = trace.startTurnSpan(null, { customerInput: message });
+        const outcome: TurnOutcome = { type: 'reply', message: HANDOFF_REPLY };
+        const updatedHistory: Message[] = [
+          ...conversation.messages,
+          { role: 'user', parts: [{ type: 'text', content: message }] },
+          { role: 'assistant', parts: [{ type: 'text', content: HANDOFF_REPLY }] },
+        ];
+        await store.updateConversationHistory(conversation.id, updatedHistory);
+        turn.end({ outcome });
+        exporter?.export(trace.end());
+        return { kind: 'ok', conversationId: conversation.id, outcome };
+      }
+
       try {
         const { outcome, updatedHistory } = await runTurn({
           history: conversation.messages,
@@ -235,6 +271,7 @@ export async function createAgentService(
 
   return {
     handleNewMessage,
+    inbox,
     shutdown: () => exporter?.flush() ?? Promise.resolve(),
   };
 }
