@@ -79,7 +79,8 @@ const INBOX_PAGE_HTML = `<!doctype html>
 </main>
 <script>
 (function () {
-  var state = { selectedId: null, flash: null, rendered: {} };
+  // The URL fragment names the selected record, so a link opens straight on it.
+  var state = { selectedId: location.hash.length > 1 ? decodeURIComponent(location.hash.slice(1)) : null, flash: null, rendered: {} };
 
   // Re-render a region only when what it shows has changed. The page polls
   // every five seconds, and replacing innerHTML with identical content
@@ -257,7 +258,11 @@ const INBOX_PAGE_HTML = `<!doctype html>
     });
   }
 
-  function select(id) { state.selectedId = id; state.flash = null; refresh(); }
+  function select(id) {
+    state.selectedId = id; state.flash = null;
+    history.replaceState(null, '', id ? '#' + encodeURIComponent(id) : location.pathname);
+    refresh();
+  }
 
   function refresh() {
     Promise.all([
