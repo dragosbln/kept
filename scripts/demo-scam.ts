@@ -233,7 +233,12 @@ function printRecord(record: RefundLedgerRecord): void {
   printCapsTable(decision.record.perCap);
 }
 
-function printInboxLinks(baseUrl: string, user: string | undefined, recordIds: string[]): void {
+function printInboxLinks(
+  baseUrl: string,
+  user: string | undefined,
+  recordIds: string[],
+  conversationIds: string[],
+): void {
   section('Open the approval inbox');
   const targets =
     recordIds.length === 0
@@ -247,6 +252,18 @@ function printInboxLinks(baseUrl: string, user: string | undefined, recordIds: s
         : 'the credential is KEPT_INBOX_USER / KEPT_INBOX_PASSWORD in .env',
     )}`,
   );
+  // The service exports traces only when both Langfuse keys are set; the
+  // demo reads the same .env, so it knows whether there is anything to see.
+  if (process.env['LANGFUSE_PUBLIC_KEY'] && process.env['LANGFUSE_SECRET_KEY']) {
+    const langfuse =
+      process.env['LANGFUSE_BASE_URL'] ??
+      process.env['LANGFUSE_URL'] ??
+      `http://localhost:${process.env['LANGFUSE_PORT'] ?? '3030'}`;
+    console.log(`\n${INDENT}${cyan('▶')}  ${bold(underline(cyan(langfuse)))}`);
+    console.log(
+      `${INDENT}   ${dim(`traces: one session per conversation, ids ${conversationIds.join(', ')}`)}`,
+    );
+  }
   console.log(
     `\n${INDENT}${dim("Every run adds to the service's in-memory ledger; restart it for a clean slate.")}\n`,
   );
@@ -315,7 +332,7 @@ async function main(): Promise<void> {
     console.log(
       `${INDENT}${yellow('The queue could not be read back:')} set KEPT_INBOX_USER and KEPT_INBOX_PASSWORD in .env.`,
     );
-    printInboxLinks(baseUrl, undefined, []);
+    printInboxLinks(baseUrl, undefined, [], conversationIds);
     return;
   }
   const auth = {
@@ -357,6 +374,7 @@ async function main(): Promise<void> {
     baseUrl,
     user,
     landed.map(({ record }) => record.id),
+    conversationIds,
   );
 }
 
