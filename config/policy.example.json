@@ -1,0 +1,23 @@
+{
+  "version": "1.0.0",
+  "caps": [
+    { "kind": "per_call", "amountMinorUnits": 10000, "currency": "USD" },
+    { "kind": "per_order", "amountMinorUnits": 10000, "currency": "USD" },
+    {
+      "kind": "per_customer",
+      "amountMinorUnits": 15000,
+      "currency": "USD",
+      "windowMs": 2592000000
+    },
+    { "kind": "per_day", "amountMinorUnits": 30000, "currency": "USD", "windowMs": 86400000 },
+    { "kind": "per_call", "amountMinorUnits": 10000, "currency": "EUR" },
+    { "kind": "per_order", "amountMinorUnits": 10000, "currency": "EUR" },
+    {
+      "kind": "per_customer",
+      "amountMinorUnits": 15000,
+      "currency": "EUR",
+      "windowMs": 2592000000
+    },
+    { "kind": "per_day", "amountMinorUnits": 30000, "currency": "EUR", "windowMs": 86400000 }
+  ]
+}

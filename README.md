@@ -52,8 +52,8 @@ Medusa-first adapter over a platform-agnostic core. TypeScript. MIT.
 conversations live inside the agent process. A restart clears them. The
 demo says so at the end of every run. Postgres enters the stack with
 retrieval, in the next block; persistence of these three arrives with
-the first pilot. Caps are configured in code for now, in
-`DEFAULT_POLICY_CONFIG`; a config file is on the list.
+the first pilot. Caps come from a JSON file named in `.env`, or from the
+built-in defaults when none is named.
 
 ## Repository layout
 
@@ -195,16 +195,20 @@ to start rather than failing on the first customer message.
 | `KEPT_OPENAI_REASONING_EFFORT`                | `none`                              | OpenAI only. `none` for gpt-5.1 and later, `minimal` for gpt-5, empty for models without reasoning |
 | `KEPT_PROMPT_VERSION`                         | `1.1.0`                             | `1.0.0` keeps the caps in the prompt: the guard the policy engine replaced, kept for comparison    |
 | `KEPT_INBOX_USER` / `KEPT_INBOX_PASSWORD`     | `kept` / dev default                | The inbox credential. The username is the actor recorded on every inbox action.                    |
+| `KEPT_POLICY_CONFIG`                          | unset                               | Path to a caps file, see [`config/README.md`](config/README.md); unset means the built-in defaults |
 | `KEPT_ALLOWED_ORIGINS`                        | `*`                                 | CORS allowlist for the widget's origin, comma-separated                                            |
 | `PORT`                                        | `3100`                              | Agent service port                                                                                 |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | unset                               | Set both to export traces; unset, traces stay in the process and the boot log says so              |
 
-The caps live in `packages/core/src/policy/config.ts` as
-`DEFAULT_POLICY_CONFIG`: the same amounts in every supported currency,
-never converted, with the per-customer and per-day windows as trailing
-durations rather than calendar days. A request equal to a cap is
-allowed; a cap of zero means approve everything. A currency with no caps
-listed fails closed.
+Caps are a JSON file: copy [`config/policy.example.json`](config/policy.example.json),
+which spells out the built-in defaults, edit the amounts, and name it in
+`KEPT_POLICY_CONFIG`. The same amounts apply in every supported currency
+and are never converted; the per-customer and per-day windows are
+trailing durations, not calendar days. A request equal to a cap is
+allowed, a cap of zero sends every refund to a human, and a currency with
+no caps fails closed. [`config/README.md`](config/README.md) has the full
+semantics. The file's hash is printed at boot and stamped on every trace,
+decision and ledger record.
 
 ## Everyday commands
 

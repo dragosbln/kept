@@ -21,3 +21,6 @@ coverage/
 .env
 .env.*
 !.env.example
+
+# your own caps file (copy of config/policy.example.json); the example stays tracked
+config/policy.json

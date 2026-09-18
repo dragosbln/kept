@@ -2,7 +2,11 @@
 // has its own model and token-budget defaults, and every ambiguous or
 // incomplete setup is a boot-time refusal that names the fix.
 
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_POLICY_CONFIG, hashPolicyConfig } from '@kept-hq/core';
 import { PROVIDER_DEFAULTS, configFromEnv } from './handler.js';
 
 describe('configFromEnv', () => {
@@ -74,5 +78,59 @@ describe('configFromEnv', () => {
       KEPT_MAX_TOKENS: '2048',
     });
     expect(config).toMatchObject({ provider: 'openai', model: 'gpt-5.6-luna', maxTokens: 2048 });
+  });
+});
+
+describe('KEPT_POLICY_CONFIG', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'kept-policy-'));
+  const write = (name: string, body: string): string => {
+    const file = path.join(dir, name);
+    writeFileSync(file, body);
+    return file;
+  };
+  const env = { OPENAI_API_KEY: 'o' };
+
+  it('unset means the built-in defaults', () => {
+    expect(configFromEnv(env)).not.toHaveProperty('policy');
+    expect(configFromEnv({ ...env, KEPT_POLICY_CONFIG: '  ' })).not.toHaveProperty('policy');
+  });
+
+  it('loads, validates and hashes the file; relative paths resolve from INIT_CWD', () => {
+    const file = write(
+      'policy.json',
+      JSON.stringify({
+        version: '2.0.0',
+        caps: [{ kind: 'per_call', amountMinorUnits: 5000, currency: 'USD' }],
+      }),
+    );
+    const absolute = configFromEnv({ ...env, KEPT_POLICY_CONFIG: file });
+    expect(absolute.policy).toMatchObject({ source: file, config: { version: '2.0.0' } });
+    expect(absolute.policy?.hash).toBe(hashPolicyConfig(absolute.policy!.config));
+
+    const relative = configFromEnv({ ...env, KEPT_POLICY_CONFIG: 'policy.json', INIT_CWD: dir });
+    expect(relative.policy?.source).toBe(file);
+  });
+
+  it('the shipped example is valid and equals the built-in defaults', () => {
+    const example = path.resolve(import.meta.dirname, '../../../config/policy.example.json');
+    const config = configFromEnv({ ...env, KEPT_POLICY_CONFIG: example });
+    expect(config.policy?.hash).toBe(hashPolicyConfig(DEFAULT_POLICY_CONFIG));
+  });
+
+  it('refuses a missing file, invalid JSON, and a config the schema rejects, naming the variable', () => {
+    expect(() =>
+      configFromEnv({ ...env, KEPT_POLICY_CONFIG: path.join(dir, 'nope.json') }),
+    ).toThrow(/KEPT_POLICY_CONFIG: no file/);
+    const bad = write('bad.json', '{ not json');
+    expect(() => configFromEnv({ ...env, KEPT_POLICY_CONFIG: bad })).toThrow(/not valid JSON/);
+    // A windowed kind without its window is the schema's own refusal.
+    const wrong = write(
+      'wrong.json',
+      JSON.stringify({
+        version: '1',
+        caps: [{ kind: 'per_day', amountMinorUnits: 1, currency: 'USD' }],
+      }),
+    );
+    expect(() => configFromEnv({ ...env, KEPT_POLICY_CONFIG: wrong })).toThrow(/schema/);
   });
 });

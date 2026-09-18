@@ -4,10 +4,14 @@
 // trace after the loop is done. The loop never speaks HTTP and never ends
 // the trace; this file owns both boundaries.
 
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import {
   AnthropicModelClient,
   CodePromptManager,
   DEFAULT_POLICY_CONFIG,
+  hashPolicyConfig,
+  parsePolicyConfig,
   DemoBackend,
   InMemoryAuditLog,
   InMemoryConversationStore,
@@ -33,6 +37,7 @@ import type {
   ModelClientConfig,
   OpenAIReasoningEffort,
   OrderBackend,
+  PolicyEngineConfig,
   PromptData,
   RefundLedger,
   ToolRegistry,
@@ -79,8 +84,49 @@ export type AgentServiceConfig = {
   apiKey: string;
   /** OpenAI only: the `reasoning_effort` sent on every call; absent means the field is not sent. */
   reasoningEffort?: OpenAIReasoningEffort;
+  /** The caps file named by KEPT_POLICY_CONFIG, parsed and hashed; absent means the built-in defaults. */
+  policy?: { source: string; config: PolicyEngineConfig; hash: string };
   langfuse?: { baseUrl: string; publicKey: string; secretKey: string };
 };
+
+/**
+ * KEPT_POLICY_CONFIG names a JSON file with the caps a merchant wants; the
+ * shape is the policy engine's own schema (see config/README.md). Read and
+ * validated once here, so a bad file stops the boot instead of failing the
+ * first refund. Relative paths resolve from where pnpm was invoked
+ * (INIT_CWD, the repo root under `pnpm start`), else from the cwd.
+ */
+function policyFromEnv(env: NodeJS.ProcessEnv): AgentServiceConfig['policy'] {
+  const raw = env['KEPT_POLICY_CONFIG']?.trim();
+  if (!raw) return undefined;
+  const source = path.resolve(env['INIT_CWD'] ?? process.cwd(), raw);
+
+  let text: string;
+  try {
+    text = readFileSync(source, 'utf8');
+  } catch {
+    throw new Error(`KEPT_POLICY_CONFIG: no file at ${source}`);
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`KEPT_POLICY_CONFIG: ${source} is not valid JSON: ${detail}`, {
+      cause: error,
+    });
+  }
+  try {
+    const config = parsePolicyConfig(json);
+    return { source, config, hash: hashPolicyConfig(config) };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `KEPT_POLICY_CONFIG: ${source} does not match the policy config schema: ${detail}`,
+      { cause: error },
+    );
+  }
+}
 
 const PROVIDERS: readonly Provider[] = ['anthropic', 'openai'];
 
@@ -177,6 +223,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv): AgentServiceConfig {
 
   const defaults = PROVIDER_DEFAULTS[provider];
   const reasoningEffort = provider === 'openai' ? reasoningEffortFromEnv(env, defaults) : undefined;
+  const policy = policyFromEnv(env);
   return {
     provider,
     model: env['KEPT_MODEL'] ?? defaults.model,
@@ -185,6 +232,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv): AgentServiceConfig {
     backendKind,
     apiKey,
     ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+    ...(policy === undefined ? {} : { policy }),
     ...(langfusePublicKey && langfuseSecretKey
       ? {
           langfuse: {
@@ -278,9 +326,11 @@ export async function createAgentService(
   // One ledger per process, shared by every conversation: per-customer and
   // per-day caps, and the cross-conversation attacks, all depend on that.
   const ledger = deps.ledger ?? new InMemoryRefundLedger();
-  // One config per process, validated here at boot; its hash is stamped on
-  // every trace and every decision. A config file arrives with the admin.
-  const policyEngine = deps.policyEngine ?? new PolicyEngine(DEFAULT_POLICY_CONFIG);
+  // One config per process, from the caps file when KEPT_POLICY_CONFIG names
+  // one and the built-in defaults otherwise; validated at boot, its hash
+  // stamped on every trace and every decision.
+  const policyEngine =
+    deps.policyEngine ?? new PolicyEngine(config.policy?.config ?? DEFAULT_POLICY_CONFIG);
   const registry = createToolRegistry(backend, ledger, policyEngine);
   const modelClient = buildModelClient(config, promptData, registry);
   const store = deps.store ?? new InMemoryConversationStore();

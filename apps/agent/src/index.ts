@@ -3,6 +3,7 @@
 // app.ts so they can be tested without a socket.
 
 import { serve } from '@hono/node-server';
+import { DEFAULT_POLICY_CONFIG, hashPolicyConfig } from '@kept-hq/core';
 import { createApp } from './app.js';
 import { configFromEnv, createAgentService } from './handler.js';
 
@@ -38,6 +39,12 @@ const app = createApp(service, {
 const server = serve({ fetch: app.fetch, port: PORT }, (info) => {
   console.log(`agent service listening on http://localhost:${info.port}`);
   console.log(`model: ${config.provider} · ${config.model} · prompt ${config.promptVersion}`);
+  // The same hash the traces and the ledger records carry, so a screenshot
+  // of the inbox can be matched to the caps that were in force.
+  const policy = config.policy
+    ? `${config.policy.source} · cfg ${config.policy.hash.slice(0, 12)}`
+    : `built-in defaults · cfg ${hashPolicyConfig(DEFAULT_POLICY_CONFIG).slice(0, 12)}`;
+  console.log(`caps: ${policy}`);
   console.log(`approval inbox at http://localhost:${info.port}/inbox (user: ${inboxUser})`);
 });
 
