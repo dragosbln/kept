@@ -19,7 +19,8 @@ if (!inboxUser || !inboxPassword) {
   );
 }
 
-const service = await createAgentService(configFromEnv(process.env));
+const config = configFromEnv(process.env);
+const service = await createAgentService(config);
 
 // The widget POSTs from the storefront's origin. Comma-separated allowlist;
 // `*` (the default) is right for local development and for a widget that
@@ -36,6 +37,7 @@ const app = createApp(service, {
 
 const server = serve({ fetch: app.fetch, port: PORT }, (info) => {
   console.log(`agent service listening on http://localhost:${info.port}`);
+  console.log(`model: ${config.provider} · ${config.model} · prompt ${config.promptVersion}`);
   console.log(`approval inbox at http://localhost:${info.port}/inbox (user: ${inboxUser})`);
 });
 

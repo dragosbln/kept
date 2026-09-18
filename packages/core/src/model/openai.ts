@@ -13,10 +13,17 @@
 // - There is no response-flavored context overflow: the window can only be
 //   exceeded by the request, surfacing as a 400 with a structured
 //   `code: "context_length_exceeded"` (no message-regex needed).
+// - Reasoning is a request field, `reasoning_effort`, with model-specific
+//   rules: the 5.6 models refuse function tools on this endpoint unless it
+//   is `none`, the original gpt-5 family knows `minimal` but not `none`, and
+//   non-reasoning models reject the field outright. So it is an option the
+//   caller sets per model and the client sends only when set; it never
+//   guesses. (Anthropic's counterpart, `thinking: disabled`, is set always.)
 
 import OpenAI, { APIConnectionTimeoutError, APIError, BadRequestError } from 'openai';
 import type { ClientOptions } from 'openai';
 import type { ChatCompletion, ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import type { ReasoningEffort } from 'openai/resources/shared';
 import type { ErrorType, Message, MessagePart, ToolArgs } from '../messages.js';
 import type { ModelClient } from './client.js';
 import type {
@@ -31,6 +38,24 @@ export type OpenAITransportOptions = Pick<
   ClientOptions,
   'fetch' | 'baseURL' | 'timeout' | 'maxRetries'
 >;
+
+/** The endpoint's alphabet for `reasoning_effort`. Absence is expressed by not setting the option, never by null. */
+export type OpenAIReasoningEffort = NonNullable<ReasoningEffort>;
+
+export const OPENAI_REASONING_EFFORTS = [
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+] as const satisfies readonly OpenAIReasoningEffort[];
+
+/** Per-model request knobs, as opposed to transport: sent on every call when set. */
+export type OpenAIRequestOptions = {
+  reasoningEffort?: OpenAIReasoningEffort;
+};
 
 /**
  * Tool args arrive as a model-written JSON string; the model can emit
@@ -50,10 +75,17 @@ function parseToolArgs(raw: string): ToolArgs {
 export class OpenAIModelClient implements ModelClient {
   private config: ModelClientConfig;
   private client: OpenAI;
+  private request: OpenAIRequestOptions;
 
-  constructor(config: ModelClientConfig, apiKey: string, transport?: OpenAITransportOptions) {
+  constructor(
+    config: ModelClientConfig,
+    apiKey: string,
+    transport?: OpenAITransportOptions,
+    request: OpenAIRequestOptions = {},
+  ) {
     this.config = config;
     this.client = new OpenAI({ apiKey, ...transport });
+    this.request = request;
   }
 
   private toOpenAIMessages(messages: Message[]): ChatCompletionMessageParam[] {
@@ -153,6 +185,9 @@ export class OpenAIModelClient implements ModelClient {
       const completion = await this.client.chat.completions.create({
         model: this.config.model,
         max_completion_tokens: this.config.maxTokens,
+        ...(this.request.reasoningEffort === undefined
+          ? {}
+          : { reasoning_effort: this.request.reasoningEffort }),
         messages: this.toOpenAIMessages(messages),
         tools: this.config.toolRegistry.map((tool) => ({
           type: 'function' as const,

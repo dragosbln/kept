@@ -37,6 +37,10 @@ const unreachableLedger: RefundLedger = {
   },
 };
 
+/** The `properties` map of a rendered JSON Schema, typed for reading descriptions. */
+const properties = (schema: Record<string, unknown>): Record<string, { description?: string }> =>
+  schema['properties'] as Record<string, { description?: string }>;
+
 describe('toModelToolRegistry', () => {
   const definitions = toModelToolRegistry(
     createToolRegistry(
@@ -60,6 +64,17 @@ describe('toModelToolRegistry', () => {
       properties: { orderId: { type: 'string' } },
       required: ['orderId'],
     });
+  });
+
+  it('carries the field descriptions into the JSON Schema, where the model reads them', () => {
+    // Small models strip id prefixes when the schema leaves them to guess;
+    // the description is the fix, so its absence on the wire is a regression.
+    expect(properties(definitions[0]!.inputSchema)['orderId']?.description).toContain(
+      'exactly as the customer wrote it',
+    );
+    expect(properties(definitions[1]!.inputSchema)['orderItemId']?.description).toContain(
+      'lookup_order',
+    );
   });
 
   it('renders the refund schema with its three required fields', () => {
