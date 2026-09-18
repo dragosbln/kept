@@ -8,6 +8,17 @@ import { configFromEnv, createAgentService } from './handler.js';
 
 const PORT = Number(process.env['PORT'] ?? 3100);
 
+// The inbox approves refunds, so it is guarded from the first boot: one
+// shared credential, required, read here the way the model key is. The
+// username is the actor on every inbox action.
+const inboxUser = process.env['KEPT_INBOX_USER'];
+const inboxPassword = process.env['KEPT_INBOX_PASSWORD'];
+if (!inboxUser || !inboxPassword) {
+  throw new Error(
+    'KEPT_INBOX_USER and KEPT_INBOX_PASSWORD are not set — the approval inbox needs a credential before the service will start',
+  );
+}
+
 const service = await createAgentService(configFromEnv(process.env));
 
 // The widget POSTs from the storefront's origin. Comma-separated allowlist;
@@ -18,11 +29,14 @@ const allowedOrigins = (process.env['KEPT_ALLOWED_ORIGINS'] ?? '*')
   .map((origin) => origin.trim())
   .filter((origin) => origin.length > 0);
 
-const app = createApp(service, { allowedOrigins });
+const app = createApp(service, {
+  allowedOrigins,
+  inbox: { user: inboxUser, password: inboxPassword },
+});
 
 const server = serve({ fetch: app.fetch, port: PORT }, (info) => {
   console.log(`agent service listening on http://localhost:${info.port}`);
-  console.log(`approval inbox at http://localhost:${info.port}/inbox`);
+  console.log(`approval inbox at http://localhost:${info.port}/inbox (user: ${inboxUser})`);
 });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
