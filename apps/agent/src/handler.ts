@@ -4,15 +4,20 @@
 // trace after the loop is done. The loop never speaks HTTP and never ends
 // the trace; this file owns both boundaries.
 
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import {
   AnthropicModelClient,
   CodePromptManager,
   DEFAULT_POLICY_CONFIG,
+  hashPolicyConfig,
+  parsePolicyConfig,
   DemoBackend,
   InMemoryAuditLog,
   InMemoryConversationStore,
   InMemoryRefundLedger,
   LangfuseExporter,
+  OPENAI_REASONING_EFFORTS,
   OpenAIModelClient,
   PolicyEngine,
   Trace,
@@ -30,7 +35,9 @@ import type {
   Message,
   ModelClient,
   ModelClientConfig,
+  OpenAIReasoningEffort,
   OrderBackend,
+  PolicyEngineConfig,
   PromptData,
   RefundLedger,
   ToolRegistry,
@@ -66,25 +73,147 @@ class ConversationLocks {
 
 // --- Configuration ----------------------------------------------------------
 
+export type Provider = 'anthropic' | 'openai';
+
 export type AgentServiceConfig = {
-  provider: 'anthropic' | 'openai';
+  provider: Provider;
   model: string;
   maxTokens: number;
   promptVersion: string;
   backendKind: BackendKind;
   apiKey: string;
+  /** OpenAI only: the `reasoning_effort` sent on every call; absent means the field is not sent. */
+  reasoningEffort?: OpenAIReasoningEffort;
+  /** The caps file named by KEPT_POLICY_CONFIG, parsed and hashed; absent means the built-in defaults. */
+  policy?: { source: string; config: PolicyEngineConfig; hash: string };
   langfuse?: { baseUrl: string; publicKey: string; secretKey: string };
 };
 
+/**
+ * KEPT_POLICY_CONFIG names a JSON file with the caps a merchant wants; the
+ * shape is the policy engine's own schema (see config/README.md). Read and
+ * validated once here, so a bad file stops the boot instead of failing the
+ * first refund. Relative paths resolve from where pnpm was invoked
+ * (INIT_CWD, the repo root under `pnpm start`), else from the cwd.
+ */
+function policyFromEnv(env: NodeJS.ProcessEnv): AgentServiceConfig['policy'] {
+  const raw = env['KEPT_POLICY_CONFIG']?.trim();
+  if (!raw) return undefined;
+  const source = path.resolve(env['INIT_CWD'] ?? process.cwd(), raw);
+
+  let text: string;
+  try {
+    text = readFileSync(source, 'utf8');
+  } catch {
+    throw new Error(`KEPT_POLICY_CONFIG: no file at ${source}`);
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`KEPT_POLICY_CONFIG: ${source} is not valid JSON: ${detail}`, {
+      cause: error,
+    });
+  }
+  try {
+    const config = parsePolicyConfig(json);
+    return { source, config, hash: hashPolicyConfig(config) };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `KEPT_POLICY_CONFIG: ${source} does not match the policy config schema: ${detail}`,
+      { cause: error },
+    );
+  }
+}
+
+const PROVIDERS: readonly Provider[] = ['anthropic', 'openai'];
+
+const API_KEY_VAR: Record<Provider, string> = {
+  anthropic: 'ANTHROPIC_API_KEY',
+  openai: 'OPENAI_API_KEY',
+};
+
+type ProviderDefaults = {
+  model: string;
+  maxTokens: number;
+  reasoningEffort?: OpenAIReasoningEffort;
+};
+
+/**
+ * One set of defaults per provider, so pasting a single key into .env is the
+ * whole setup. Both are the cheap tier of their provider: calling the tools
+ * and relaying their results is all the prompt asks of the model, the trust
+ * layer decides. Luna over gpt-4o-mini at near-equal price because it
+ * attempts the refund the demo needs caught every time (3 of 3 against 1 of
+ * 3). Reasoning is off: Chat Completions refuses function tools on the 5.6
+ * models otherwise, and a model without reasoning rejects the field, so
+ * KEPT_OPENAI_REASONING_EFFORT is emptied when switching to one.
+ */
+export const PROVIDER_DEFAULTS: Record<Provider, ProviderDefaults> = {
+  anthropic: { model: 'claude-haiku-4-5', maxTokens: 1024 },
+  openai: { model: 'gpt-5.6-luna', maxTokens: 1024, reasoningEffort: 'none' },
+};
+
+const isProvider = (value: string): value is Provider => (PROVIDERS as string[]).includes(value);
+
+/**
+ * KEPT_OPENAI_REASONING_EFFORT: unset means the provider default, an empty
+ * value means "send no such field" (non-reasoning models reject it), anything
+ * else must be a value the endpoint knows.
+ */
+function reasoningEffortFromEnv(
+  env: NodeJS.ProcessEnv,
+  defaults: ProviderDefaults,
+): OpenAIReasoningEffort | undefined {
+  const raw = env['KEPT_OPENAI_REASONING_EFFORT'];
+  if (raw === undefined) return defaults.reasoningEffort;
+  const value = raw.trim();
+  if (value === '') return undefined;
+  if (!(OPENAI_REASONING_EFFORTS as readonly string[]).includes(value)) {
+    throw new Error(
+      `KEPT_OPENAI_REASONING_EFFORT must be one of ${OPENAI_REASONING_EFFORTS.join(', ')}, or empty to send none; got "${value}"`,
+    );
+  }
+  return value as OpenAIReasoningEffort;
+}
+
+/**
+ * KEPT_PROVIDER when set; otherwise the provider whose key is present. Two
+ * keys and no KEPT_PROVIDER is a refusal, not a guess: which model answers
+ * customers is not something to infer from the order of lines in a file.
+ */
+function providerFromEnv(env: NodeJS.ProcessEnv): Provider {
+  const explicit = env['KEPT_PROVIDER']?.trim();
+  if (explicit) {
+    if (!isProvider(explicit)) {
+      throw new Error(`KEPT_PROVIDER must be one of ${PROVIDERS.join(', ')}; got "${explicit}"`);
+    }
+    return explicit;
+  }
+  const withKey = PROVIDERS.filter((provider) => env[API_KEY_VAR[provider]]);
+  if (withKey.length === 1) return withKey[0]!;
+  if (withKey.length === 0) {
+    throw new Error(
+      'no model key — set ANTHROPIC_API_KEY or OPENAI_API_KEY in .env; the agent service cannot call the model',
+    );
+  }
+  throw new Error(
+    'both ANTHROPIC_API_KEY and OPENAI_API_KEY are set — choose with KEPT_PROVIDER=anthropic or KEPT_PROVIDER=openai',
+  );
+}
+
 /** Reads service config from env; throws at boot (never per request). */
 export function configFromEnv(env: NodeJS.ProcessEnv): AgentServiceConfig {
-  const provider = env['KEPT_PROVIDER'] === 'openai' ? 'openai' : 'anthropic';
+  const provider = providerFromEnv(env);
   const backendKind = env['KEPT_BACKEND'] === 'medusa' ? 'medusa' : 'demo';
 
-  const apiKeyVar = provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY';
-  const apiKey = env[apiKeyVar];
+  const apiKey = env[API_KEY_VAR[provider]];
   if (!apiKey) {
-    throw new Error(`${apiKeyVar} is not set — the agent service cannot call the model`);
+    throw new Error(
+      `${API_KEY_VAR[provider]} is not set — KEPT_PROVIDER=${provider} needs it to call the model`,
+    );
   }
 
   const langfusePublicKey = env['LANGFUSE_PUBLIC_KEY'];
@@ -92,13 +221,18 @@ export function configFromEnv(env: NodeJS.ProcessEnv): AgentServiceConfig {
   const langfuseBaseUrl =
     env['LANGFUSE_BASE_URL'] ?? `http://localhost:${env['LANGFUSE_PORT'] ?? '3030'}`;
 
+  const defaults = PROVIDER_DEFAULTS[provider];
+  const reasoningEffort = provider === 'openai' ? reasoningEffortFromEnv(env, defaults) : undefined;
+  const policy = policyFromEnv(env);
   return {
     provider,
-    model: env['KEPT_MODEL'] ?? 'claude-sonnet-5',
-    maxTokens: Number(env['KEPT_MAX_TOKENS'] ?? 1024),
+    model: env['KEPT_MODEL'] ?? defaults.model,
+    maxTokens: Number(env['KEPT_MAX_TOKENS'] ?? defaults.maxTokens),
     promptVersion: env['KEPT_PROMPT_VERSION'] ?? '1.0.0',
     backendKind,
     apiKey,
+    ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+    ...(policy === undefined ? {} : { policy }),
     ...(langfusePublicKey && langfuseSecretKey
       ? {
           langfuse: {
@@ -135,7 +269,12 @@ function buildModelClient(
   };
   return config.provider === 'anthropic'
     ? new AnthropicModelClient(clientConfig, config.apiKey)
-    : new OpenAIModelClient(clientConfig, config.apiKey);
+    : new OpenAIModelClient(
+        clientConfig,
+        config.apiKey,
+        undefined,
+        config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort },
+      );
 }
 
 // --- The service ------------------------------------------------------------
@@ -187,9 +326,11 @@ export async function createAgentService(
   // One ledger per process, shared by every conversation: per-customer and
   // per-day caps, and the cross-conversation attacks, all depend on that.
   const ledger = deps.ledger ?? new InMemoryRefundLedger();
-  // One config per process, validated here at boot; its hash is stamped on
-  // every trace and every decision. A config file arrives with the admin.
-  const policyEngine = deps.policyEngine ?? new PolicyEngine(DEFAULT_POLICY_CONFIG);
+  // One config per process, from the caps file when KEPT_POLICY_CONFIG names
+  // one and the built-in defaults otherwise; validated at boot, its hash
+  // stamped on every trace and every decision.
+  const policyEngine =
+    deps.policyEngine ?? new PolicyEngine(config.policy?.config ?? DEFAULT_POLICY_CONFIG);
   const registry = createToolRegistry(backend, ledger, policyEngine);
   const modelClient = buildModelClient(config, promptData, registry);
   const store = deps.store ?? new InMemoryConversationStore();

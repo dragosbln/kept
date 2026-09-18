@@ -11,12 +11,22 @@ import type { PolicyEngine } from '../policy/engine.js';
 import type { PolicyRequest } from '../policy/types.js';
 import { executeRefund, type RefundExecution } from '../refunds/execute.js';
 
-const LookupOrderInputSchema = z.object({ orderId: z.string() });
+// Ids are opaque strings and travel as written. Small models strip prefixes
+// ("1002" for "order-1002") when the schema leaves them to guess, and a
+// lookup that misses reads to the customer as "your order does not exist".
+const ORDER_ID_DESCRIPTION =
+  'The order id exactly as the customer wrote it, prefix included, for example "order-1002". Never shorten or reformat it.';
+
+const LookupOrderInputSchema = z.object({ orderId: z.string().describe(ORDER_ID_DESCRIPTION) });
 
 const IssueRefundInputSchema = z.object({
-  orderId: z.string(),
-  orderItemId: z.string(),
-  quantity: z.number(),
+  orderId: z.string().describe(ORDER_ID_DESCRIPTION),
+  orderItemId: z
+    .string()
+    .describe(
+      'The line id exactly as lookup_order returned it in items[].id, for example "order-1002-line-1".',
+    ),
+  quantity: z.number().describe('Units of that line to refund; a positive integer.'),
 });
 
 /** The execution as the model reads it. Only the backend's ok answer is presented in detail. */

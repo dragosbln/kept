@@ -5,6 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { OpenAIModelClient } from './openai.js';
+import type { OpenAIRequestOptions } from './openai.js';
 import {
   contractReplyText,
   contractCustomerTurn,
@@ -159,22 +160,37 @@ describeModelClientContract('openai', {
 
 // --- Request-shape assertions ----------------------------------------------
 
-function makeCapturingClient(): {
+function makeCapturingClient(request?: OpenAIRequestOptions): {
   client: OpenAIModelClient;
   body: () => Record<string, unknown>;
 } {
   let captured: Record<string, unknown> | undefined;
-  const client = new OpenAIModelClient(config, 'test-key', {
-    maxRetries: 0,
-    fetch: async (_url, init) => {
-      captured = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      return jsonResponse(wireCompletion());
+  const client = new OpenAIModelClient(
+    config,
+    'test-key',
+    {
+      maxRetries: 0,
+      fetch: async (_url, init) => {
+        captured = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return jsonResponse(wireCompletion());
+      },
     },
-  });
+    request,
+  );
   return { client, body: () => captured! };
 }
 
 describe('OpenAIModelClient request shape', () => {
+  it('sends reasoning_effort only when the option is set', async () => {
+    const unset = makeCapturingClient();
+    await unset.client.callModel(contractCustomerTurn);
+    expect(unset.body()).not.toHaveProperty('reasoning_effort');
+
+    const off = makeCapturingClient({ reasoningEffort: 'none' });
+    await off.client.callModel(contractCustomerTurn);
+    expect(off.body()).toMatchObject({ reasoning_effort: 'none' });
+  });
+
   it('sends the system prompt as the first message and uses max_completion_tokens', async () => {
     const { client, body } = makeCapturingClient();
     await client.callModel(contractCustomerTurn);

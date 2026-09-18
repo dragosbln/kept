@@ -2,9 +2,11 @@
 // service and talking to /inbox/*. Built the way the widget is so it can
 // ship today; a Next.js front can replace it against the same API. No
 // template literals inside the page script on purpose: the page is one
-// TypeScript template literal.
+// TypeScript template literal. The page carries no identity of its own:
+// the server renders the authenticated user into it, and the browser
+// attaches the same credential to every same-origin fetch it makes.
 
-export const INBOX_PAGE_HTML = `<!doctype html>
+const INBOX_PAGE_HTML = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -56,7 +58,7 @@ export const INBOX_PAGE_HTML = `<!doctype html>
 <header>
   <h1>Kept · Approval inbox</h1>
   <span class="muted" id="counts"></span>
-  <label class="actor">Acting as <input id="actor" placeholder="your name" size="14"></label>
+  <span class="actor">Acting as <b>{{actor}}</b></span>
 </header>
 <main>
   <div class="stack">
@@ -77,7 +79,8 @@ export const INBOX_PAGE_HTML = `<!doctype html>
 </main>
 <script>
 (function () {
-  var state = { selectedId: null, flash: null, rendered: {} };
+  // The URL fragment names the selected record, so a link opens straight on it.
+  var state = { selectedId: location.hash.length > 1 ? decodeURIComponent(location.hash.slice(1)) : null, flash: null, rendered: {} };
 
   // Re-render a region only when what it shows has changed. The page polls
   // every five seconds, and replacing innerHTML with identical content
@@ -88,11 +91,6 @@ export const INBOX_PAGE_HTML = `<!doctype html>
     state.rendered[name] = key;
     render();
   }
-  var actorInput = document.getElementById('actor');
-  try { actorInput.value = localStorage.getItem('kept.actor') || ''; } catch (e) {}
-  actorInput.addEventListener('change', function () { try { localStorage.setItem('kept.actor', actorInput.value); } catch (e) {} });
-
-  function actor() { return actorInput.value.trim() || 'human'; }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]; }); }
   function money(minor, currency) { try { return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency }).format(minor / 100); } catch (e) { return minor + ' ' + currency; } }
   function when(ts) { return new Date(ts).toLocaleString(); }
@@ -100,7 +98,7 @@ export const INBOX_PAGE_HTML = `<!doctype html>
 
   function api(path, opts) {
     opts = opts || {};
-    var headers = { 'x-kept-actor': actor() };
+    var headers = {};
     if (opts.body) headers['content-type'] = 'application/json';
     return fetch(path, { method: opts.method || 'GET', headers: headers, body: opts.body ? JSON.stringify(opts.body) : undefined })
       .then(function (res) { return res.json().then(function (json) { return { ok: res.ok, status: res.status, json: json }; }); });
@@ -260,7 +258,11 @@ export const INBOX_PAGE_HTML = `<!doctype html>
     });
   }
 
-  function select(id) { state.selectedId = id; state.flash = null; refresh(); }
+  function select(id) {
+    state.selectedId = id; state.flash = null;
+    history.replaceState(null, '', id ? '#' + encodeURIComponent(id) : location.pathname);
+    refresh();
+  }
 
   function refresh() {
     Promise.all([
@@ -287,3 +289,20 @@ export const INBOX_PAGE_HTML = `<!doctype html>
 </body>
 </html>
 `;
+
+const HTML_ESCAPES: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+};
+
+const escapeHtml = (text: string): string =>
+  text.replace(/[&<>"']/g, (char) => HTML_ESCAPES[char] ?? char);
+
+/** The page for one authenticated user, who is shown as the actor. */
+export function renderInboxPage(options: { actor: string }): string {
+  // A function replacement so `$` sequences in the name are not patterns.
+  return INBOX_PAGE_HTML.replace('{{actor}}', () => escapeHtml(options.actor));
+}

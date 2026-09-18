@@ -2,33 +2,34 @@
 // request helper. Routes validate input and translate results to status
 // codes; nothing here knows how a refund is decided or executed.
 //
-// /chat is the widget's endpoint. /inbox/* is the approval inbox: reads are
-// GETs, actions are POSTs carrying the actor in the x-kept-actor header (a
-// name; there is no auth in v0). A refused action is 409 with the refusal
-// in the body, so a double click gets an answer, not an error page. The
-// inbox page itself is served at /inbox.
+// /chat is the widget's endpoint and is open: the storefront calls it.
+// /inbox and /inbox/* are the approval inbox, behind HTTP basic auth with
+// one shared credential from env. The actor stamped on every action is the
+// authenticated username: whoever holds the password is the actor, and the
+// request carries no identity of its own. Per-user accounts and roles are a
+// later change behind the same routes. A refused action is 409 with the
+// refusal in the body, so a double click gets an answer, not an error page.
 
 import { Hono } from 'hono';
+import { basicAuth } from 'hono/basic-auth';
 import { cors } from 'hono/cors';
 import { DEFAULT_TOOL_TIMEOUT_MS } from '@kept-hq/core';
 import type { ActionRefusal } from '@kept-hq/core';
 import type { AgentService } from './handler.js';
-import { INBOX_PAGE_HTML } from './inbox-page.js';
+import { renderInboxPage } from './inbox-page.js';
 
 export type AppOptions = {
   /** Comma-separated origins the widget may POST from; `*` for any. */
   allowedOrigins: string[];
+  /** The one credential the inbox accepts; its username is the actor on every action. */
+  inbox: { user: string; password: string };
 };
-
-const DEFAULT_ACTOR = 'human';
 
 function statusFor(refusal: ActionRefusal): 404 | 409 {
   return refusal.reason === 'record_not_found' || refusal.reason === 'conversation_not_found'
     ? 404
     : 409;
 }
-
-const actorOf = (header: string | undefined): string => header?.trim() || DEFAULT_ACTOR;
 
 /** The reconciliation window: the query when given and sane, the executor's tool timeout otherwise. */
 const windowOf = (query: string | undefined): number => {
@@ -78,7 +79,19 @@ export function createApp(service: AgentService, options: AppOptions): Hono {
 
   // --- Inbox ----------------------------------------------------------------
 
-  app.get('/inbox', (c) => c.html(INBOX_PAGE_HTML));
+  // One credential guards the page and the API alike. The middleware
+  // compares in constant time; the browser's own prompt covers the page and,
+  // the API being same-origin, every fetch the page makes afterwards.
+  const inboxAuth = basicAuth({
+    username: options.inbox.user,
+    password: options.inbox.password,
+    realm: 'Kept inbox',
+  });
+  app.use('/inbox', inboxAuth);
+  app.use('/inbox/*', inboxAuth);
+  const actor = options.inbox.user;
+
+  app.get('/inbox', (c) => c.html(renderInboxPage({ actor })));
 
   app.get('/inbox/refunds/pending', async (c) =>
     c.json({ items: await service.inbox.listPending() }),
@@ -106,35 +119,26 @@ export function createApp(service: AgentService, options: AppOptions): Hono {
   });
 
   app.post('/inbox/refunds/:id/approve', async (c) => {
-    const result = await service.inbox.approve(
-      c.req.param('id'),
-      actorOf(c.req.header('x-kept-actor')),
-    );
+    const result = await service.inbox.approve(c.req.param('id'), actor);
     return result.status === 'done' ? c.json(result) : c.json(result, statusFor(result));
   });
 
   app.post('/inbox/refunds/:id/deny', async (c) => {
-    const result = await service.inbox.deny(
-      c.req.param('id'),
-      actorOf(c.req.header('x-kept-actor')),
-    );
+    const result = await service.inbox.deny(c.req.param('id'), actor);
     return result.status === 'done' ? c.json(result) : c.json(result, statusFor(result));
   });
 
   app.post('/inbox/refunds/:id/reconcile', async (c) => {
     const result = await service.inbox.reconcile(
       c.req.param('id'),
-      actorOf(c.req.header('x-kept-actor')),
+      actor,
       windowOf(c.req.query('windowMs')),
     );
     return result.status === 'done' ? c.json(result) : c.json(result, statusFor(result));
   });
 
   app.post('/inbox/conversations/:id/take-over', async (c) => {
-    const result = await service.inbox.takeOver(
-      c.req.param('id'),
-      actorOf(c.req.header('x-kept-actor')),
-    );
+    const result = await service.inbox.takeOver(c.req.param('id'), actor);
     return result.status === 'done' ? c.json(result) : c.json(result, statusFor(result));
   });
 
