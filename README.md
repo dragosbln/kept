@@ -273,6 +273,14 @@ Decisions that are locked are recorded under
 [`docs/decisions/`](docs/decisions/), starting with why eval assertions
 read the in-process trace and never the Langfuse API.
 
+### Articles
+
+Written while building Kept, one per piece of the architecture as it
+lands:
+
+- [Putting the trace before the loop](https://dbln.me/blog/building-an-ai-agent-observability-first):
+  an observability-first approach to building an AI agent, the insights and tradeoffs.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
