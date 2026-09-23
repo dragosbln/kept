@@ -16,3 +16,4 @@ export * from './agent/index.js';
 export * from './policy/index.js';
 export * from './refunds/index.js';
 export * from './inbox/index.js';
+export * from './retrieval/index.js';
