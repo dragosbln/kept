@@ -42,6 +42,14 @@ Medusa-first adapter over a platform-agnostic core. TypeScript. MIT.
 - **Tracing.** One trace per turn, one session per conversation, OTel
   GenAI attribute conventions, the prompt hash and the policy config hash
   stamped on every one. Export to Langfuse is optional.
+- **Policy search with source tiers.** Return, shipping and refund
+  policies are ingested into Postgres with pgvector and searched by a
+  tool the model calls. Binding policy and help-center articles are
+  separate tiers with separate budgets, expired documents are filtered by
+  effective date, and the tool's verdict says whether an answer is
+  grounded in binding policy, found only in an article, or not found;
+  the prompt says what each allows. The distance threshold is calibrated
+  against the corpus, not guessed. Off until a database is configured.
 - **Chat widget.** Dependency-free, rendered in a shadow root, one script
   tag to embed.
 - **Seven adversarial scripts** in `scripts/attacks/`, and a demo that
@@ -50,9 +58,9 @@ Medusa-first adapter over a platform-agnostic core. TypeScript. MIT.
 
 **In memory today.** The refund ledger, the audit log and the
 conversations live inside the agent process. A restart clears them. The
-demo says so at the end of every run. Postgres enters the stack with
-retrieval, in the next block; persistence of these three arrives with
-the first pilot. Caps come from a JSON file named in `.env`, or from the
+demo says so at the end of every run. Postgres holds only the policy
+knowledge base, when policy search is on; persistence of these three
+arrives with the first pilot. Caps come from a JSON file named in `.env`, or from the
 built-in defaults when none is named.
 
 ## Repository layout
@@ -89,7 +97,9 @@ gpt-5.6-luna). Nothing else needs changing.
 pnpm start
 ```
 
-The boot log names the model, the prompt version and the inbox address.
+The boot log names the model, the prompt version and the inbox address,
+and says that policy search is off: without a database the agent
+escalates every policy question. The section after the demo turns it on.
 Leave it running and, in a second terminal, scam it:
 
 ```bash
@@ -145,6 +155,42 @@ Use `pnpm dev` instead of `pnpm start` when editing the service: it
 restarts on every file change, which also wipes the in-memory ledger,
 so it is the wrong command for a demo.
 
+## Policy search: Postgres and the corpus
+
+The quick start runs without a knowledge base. Turning policy search on
+takes Postgres, the fixture corpus and an OpenAI key for embeddings;
+budget ten minutes, most of it the image pull.
+
+```bash
+pnpm stack:db
+```
+
+That starts Postgres with pgvector and nothing else. In `.env`, uncomment
+`DATABASE_URL`, and set `OPENAI_API_KEY` if the model key you pasted was
+Anthropic's: questions are embedded with `text-embedding-3-small`
+whichever provider answers the customer. Then load the corpus:
+
+```bash
+pnpm db:migrate && pnpm kb:ingest
+```
+
+Restart `pnpm start`; the boot log now names the store and the embedding
+model. Ask the widget "Is return shipping free?". The corpus holds a
+help-center article that says returns are always free and a binding
+policy clause that deducts a fee, and the article sits closer to the
+question than the clause does. The tool returns both, labeled by tier,
+with the binding clause first, and the prompt says binding controls; the
+trace shows the search as a retrieval span with its verdict and every
+ranked chunk.
+
+The corpus is two fictional merchants, twenty documents, in
+[`packages/core/fixtures/policy-docs/`](packages/core/fixtures/policy-docs/):
+dated binding policies and undated help-center articles that do not
+always agree with them, by design. `KEPT_STORE_ID=averlane` switches to
+the second, more complicated merchant. `pnpm kb:calibrate` prints the
+distances behind the retrieval threshold; run it again after editing the
+corpus or changing the embedding model.
+
 ## The full stack: traces in Langfuse
 
 The second path adds Docker and shows every conversation as a trace.
@@ -197,6 +243,9 @@ to start rather than failing on the first customer message.
 | `KEPT_INBOX_USER` / `KEPT_INBOX_PASSWORD`     | `kept` / dev default                | The inbox credential. The username is the actor recorded on every inbox action.                                                                                    |
 | `KEPT_POLICY_CONFIG`                          | unset                               | Path to a caps file, see [`config/README.md`](config/README.md); unset means the built-in defaults                                                                 |
 | `KEPT_ALLOWED_ORIGINS`                        | `*`                                 | CORS allowlist for the widget's origin, comma-separated                                                                                                            |
+| `DATABASE_URL`                                | unset                               | Set to turn policy search on; unset, every policy question is escalated and the boot log says so. Needs `OPENAI_API_KEY` for embeddings                            |
+| `KEPT_STORE_ID`                               | `loomhaven`                         | The fixture store whose policies are searched: `loomhaven` or `averlane`                                                                                           |
+| `KEPT_EMBEDDING_MODEL`                        | `text-embedding-3-small`            | The OpenAI embedding model; the store's chunks must have been ingested with the same one, and the boot check refuses otherwise                                     |
 | `PORT`                                        | `3100`                              | Agent service port                                                                                                                                                 |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | unset                               | Set both to export traces; unset, traces stay in the process and the boot log says so                                                                              |
 
@@ -212,21 +261,25 @@ decision and ledger record.
 
 ## Everyday commands
 
-| Command            | Does                                                                              |
-| ------------------ | --------------------------------------------------------------------------------- |
-| `pnpm start`       | Run the agent service (no file watcher; the one to demo against)                  |
-| `pnpm dev`         | Run it under a file watcher; every restart wipes the in-memory ledger             |
-| `pnpm demo:scam`   | Replay an adversarial script against the running service and print the inbox link |
-| `pnpm demo:widget` | Serve the widget playground                                                       |
-| `pnpm attack`      | Replay adversarial scripts in-process, several runs at a time, into a log         |
-| `pnpm check`       | Everything the pre-commit hook runs, across the repo                              |
-| `pnpm lint`        | Lint (oxlint); `pnpm lint:fix` applies safe fixes                                 |
-| `pnpm format`      | Rewrite formatting (prettier)                                                     |
-| `pnpm build`       | Build every package                                                               |
-| `pnpm stack:up`    | Start Postgres and Langfuse                                                       |
-| `pnpm stack:logs`  | Tail the local stack                                                              |
-| `pnpm stack:down`  | Stop the stack, keep the data                                                     |
-| `pnpm stack:reset` | Stop the stack and drop all volumes                                               |
+| Command             | Does                                                                              |
+| ------------------- | --------------------------------------------------------------------------------- |
+| `pnpm start`        | Run the agent service (no file watcher; the one to demo against)                  |
+| `pnpm dev`          | Run it under a file watcher; every restart wipes the in-memory ledger             |
+| `pnpm demo:scam`    | Replay an adversarial script against the running service and print the inbox link |
+| `pnpm demo:widget`  | Serve the widget playground                                                       |
+| `pnpm attack`       | Replay adversarial scripts in-process, several runs at a time, into a log         |
+| `pnpm check`        | Everything the pre-commit hook runs, across the repo                              |
+| `pnpm lint`         | Lint (oxlint); `pnpm lint:fix` applies safe fixes                                 |
+| `pnpm format`       | Rewrite formatting (prettier)                                                     |
+| `pnpm build`        | Build every package                                                               |
+| `pnpm stack:db`     | Start Postgres alone, for policy search without Langfuse                          |
+| `pnpm db:migrate`   | Apply the knowledge-base migrations to `DATABASE_URL`                             |
+| `pnpm kb:ingest`    | Load the fixture policy corpus; idempotent                                        |
+| `pnpm kb:calibrate` | Print the distances behind the retrieval threshold                                |
+| `pnpm stack:up`     | Start Postgres and Langfuse                                                       |
+| `pnpm stack:logs`   | Tail the local stack                                                              |
+| `pnpm stack:down`   | Stop the stack, keep the data                                                     |
+| `pnpm stack:reset`  | Stop the stack and drop all volumes                                               |
 
 ### Pre-commit hook
 

@@ -5,9 +5,22 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { DEFAULT_POLICY_CONFIG, hashPolicyConfig } from '@kept-hq/core';
-import { PROVIDER_DEFAULTS, configFromEnv } from './handler.js';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  DEFAULT_POLICY_CONFIG,
+  DemoBackend,
+  InMemoryAuditLog,
+  InMemoryConversationStore,
+  InMemoryRefundLedger,
+  hashPolicyConfig,
+  makeDemoOrders,
+} from '@kept-hq/core';
+import {
+  PROVIDER_DEFAULTS,
+  configFromEnv,
+  createAgentService,
+  type AgentServiceConfig,
+} from './handler.js';
 
 describe('configFromEnv', () => {
   it('one key selects its provider with that provider’s defaults', () => {
@@ -132,5 +145,50 @@ describe('KEPT_POLICY_CONFIG', () => {
       }),
     );
     expect(() => configFromEnv({ ...env, KEPT_POLICY_CONFIG: wrong })).toThrow(/schema/);
+  });
+});
+
+// Policy search follows DATABASE_URL the way trace export follows the
+// Langfuse keys: off until configured, loud about it, and a refusal that
+// names the fix when it is half configured.
+const inMemoryDeps = (): Parameters<typeof createAgentService>[1] => ({
+  backend: new DemoBackend(makeDemoOrders()),
+  ledger: new InMemoryRefundLedger(),
+  store: new InMemoryConversationStore(),
+  auditLog: new InMemoryAuditLog(),
+});
+
+describe('policy search at boot', () => {
+  const base: AgentServiceConfig = {
+    provider: 'anthropic',
+    model: 'fake-model',
+    maxTokens: 64,
+    promptVersion: '1.2.0',
+    backendKind: 'demo',
+    apiKey: 'test-key-never-used',
+    storeId: 'loomhaven',
+  };
+  it('without DATABASE_URL the service boots with policy search off, and warns', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const service = await createAgentService(base, inMemoryDeps());
+      expect(warn.mock.calls.flat().join('\n')).toMatch(/policy search is OFF/);
+      await service.shutdown();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('with DATABASE_URL but no OPENAI_API_KEY the boot refuses and names the fix', async () => {
+    await expect(
+      createAgentService({ ...base, databaseUrl: 'postgresql://unused' }, inMemoryDeps()),
+    ).rejects.toThrow(/OPENAI_API_KEY/);
+  });
+
+  it('configFromEnv: DATABASE_URL is what turns policy search on', () => {
+    expect(configFromEnv({ ANTHROPIC_API_KEY: 'a' }).databaseUrl).toBeUndefined();
+    expect(
+      configFromEnv({ ANTHROPIC_API_KEY: 'a', DATABASE_URL: 'postgresql://x' }).databaseUrl,
+    ).toBe('postgresql://x');
   });
 });

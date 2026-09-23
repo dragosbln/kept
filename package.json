@@ -32,6 +32,7 @@
     "dev": "pnpm --filter @kept-hq/agent dev",
     "start": "pnpm --filter @kept-hq/agent start",
     "stack:up": "docker compose up -d",
+    "stack:db": "docker compose up -d postgres",
     "stack:down": "docker compose down",
     "stack:reset": "docker compose down -v",
     "stack:logs": "docker compose logs -f",

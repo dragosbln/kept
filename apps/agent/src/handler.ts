@@ -38,7 +38,12 @@ import type {
   AuditLog,
   BackendKind,
   ConversationStore,
+  DistanceKBChunk,
+  EmbedResponse,
+  EmbeddingClient,
+  EmbeddingClientConfig,
   InboxActions,
+  KBRepository,
   Message,
   ModelClient,
   ModelClientConfig,
@@ -96,7 +101,11 @@ export type AgentServiceConfig = {
   langfuse?: { baseUrl: string; publicKey: string; secretKey: string };
   /** The storefront whose policies every conversation of this deployment searches (KEPT_STORE_ID). */
   storeId: string;
-  /** Postgres, for the policy knowledge base (DATABASE_URL). Required unless a retrieval service is injected. */
+  /**
+   * Postgres, for the policy knowledge base (DATABASE_URL). Unset means
+   * policy search is off: the tool finds nothing and the prompt escalates
+   * every policy question. Set, it needs `embedding` too.
+   */
   databaseUrl?: string;
   /** The embedding client for policy search; OpenAI whichever provider answers the customer. */
   embedding?: { apiKey: string; model: string };
@@ -304,21 +313,58 @@ function buildModelClient(
 
 type RetrievalHandle = { service: RetrievalService; close: () => Promise<void> };
 
+export const POLICY_SEARCH_OFF_WARNING =
+  'agent service: DATABASE_URL unset — policy search is OFF, every policy question is escalated. To turn it on: pnpm stack:db, set DATABASE_URL and OPENAI_API_KEY in .env, then pnpm db:migrate && pnpm kb:ingest';
+
+/**
+ * Policy search off: a knowledge base with nothing in it. Every search
+ * comes back no_match, the span records that verdict, and the prompt's
+ * not-found rule escalates. Off is the same code path as on, minus the
+ * corpus, so nothing about the tool or the trace is special-cased.
+ */
+class EmptyKBRepository implements KBRepository {
+  async retrieve(): Promise<DistanceKBChunk[]> {
+    return [];
+  }
+  async upsertBatch(): Promise<void> {
+    throw new Error('policy search is off: nothing can be ingested without DATABASE_URL');
+  }
+  async getEmbeddingModelsForStore(): Promise<string[]> {
+    return [];
+  }
+  async deleteStore(): Promise<number> {
+    return 0;
+  }
+}
+
+/** The client that pairs with EmptyKBRepository: a vector nothing is compared against. */
+class NoEmbeddingClient implements EmbeddingClient {
+  async embed(texts: string[]): Promise<EmbedResponse> {
+    return { type: 'ok', vectors: texts.map(() => [0]), usage: { inputTokens: 0 } };
+  }
+  getConfig(): Readonly<EmbeddingClientConfig> {
+    return { provider: 'openai', model: 'none', dimension: 1 };
+  }
+}
+
 /**
  * The policy knowledge base: Postgres through Drizzle, questions embedded
- * with OpenAI. The store's chunks must have been embedded by the same model
- * the client uses, so the check runs here, before the first turn, and a
- * mismatch stops the boot (retrieval decision 2).
+ * with OpenAI, on when DATABASE_URL is set. The store's chunks must have
+ * been embedded by the same model the client uses, so the check runs here,
+ * before the first turn, and a mismatch stops the boot (retrieval
+ * decision 2). Without a database the service still boots, loudly.
  */
 async function buildRetrieval(config: AgentServiceConfig): Promise<RetrievalHandle> {
   if (!config.databaseUrl) {
-    throw new Error(
-      'DATABASE_URL is not set — the policy knowledge base lives in Postgres; run `pnpm stack:up` and copy .env.example to .env',
-    );
+    console.warn(POLICY_SEARCH_OFF_WARNING);
+    return {
+      service: new RetrievalService(new NoEmbeddingClient(), new EmptyKBRepository()),
+      close: async () => {},
+    };
   }
   if (!config.embedding) {
     throw new Error(
-      'OPENAI_API_KEY is not set — policy search embeds questions with OpenAI (text-embedding-3-small) whichever provider answers the customer',
+      'DATABASE_URL is set but OPENAI_API_KEY is not — policy search embeds questions with OpenAI (text-embedding-3-small) whichever provider answers the customer; set the key, or unset DATABASE_URL to run without policy search',
     );
   }
   const handle = createDb(config.databaseUrl);
