@@ -186,19 +186,19 @@ regenerate before anything is exposed beyond a laptop.
 Everything is read from `.env` at boot, and a bad configuration refuses
 to start rather than failing on the first customer message.
 
-| Variable                                      | Default                             | Meaning                                                                                            |
-| --------------------------------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`        |                                     | Paste one. With both set, `KEPT_PROVIDER` must choose; the service refuses to guess.               |
-| `KEPT_PROVIDER`                               | inferred from the key               | `anthropic` or `openai`                                                                            |
-| `KEPT_MODEL`                                  | `claude-haiku-4-5` / `gpt-5.6-luna` | Per provider                                                                                       |
-| `KEPT_MAX_TOKENS`                             | `1024`                              | Output budget per model call                                                                       |
-| `KEPT_OPENAI_REASONING_EFFORT`                | `none`                              | OpenAI only. `none` for gpt-5.1 and later, `minimal` for gpt-5, empty for models without reasoning |
-| `KEPT_PROMPT_VERSION`                         | `1.1.0`                             | `1.0.0` keeps the caps in the prompt: the guard the policy engine replaced, kept for comparison    |
-| `KEPT_INBOX_USER` / `KEPT_INBOX_PASSWORD`     | `kept` / dev default                | The inbox credential. The username is the actor recorded on every inbox action.                    |
-| `KEPT_POLICY_CONFIG`                          | unset                               | Path to a caps file, see [`config/README.md`](config/README.md); unset means the built-in defaults |
-| `KEPT_ALLOWED_ORIGINS`                        | `*`                                 | CORS allowlist for the widget's origin, comma-separated                                            |
-| `PORT`                                        | `3100`                              | Agent service port                                                                                 |
-| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | unset                               | Set both to export traces; unset, traces stay in the process and the boot log says so              |
+| Variable                                      | Default                             | Meaning                                                                                                                                                            |
+| --------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`        |                                     | Paste one. With both set, `KEPT_PROVIDER` must choose; the service refuses to guess.                                                                               |
+| `KEPT_PROVIDER`                               | inferred from the key               | `anthropic` or `openai`                                                                                                                                            |
+| `KEPT_MODEL`                                  | `claude-haiku-4-5` / `gpt-5.6-luna` | Per provider                                                                                                                                                       |
+| `KEPT_MAX_TOKENS`                             | `1024`                              | Output budget per model call                                                                                                                                       |
+| `KEPT_OPENAI_REASONING_EFFORT`                | `none`                              | OpenAI only. `none` for gpt-5.1 and later, `minimal` for gpt-5, empty for models without reasoning                                                                 |
+| `KEPT_PROMPT_VERSION`                         | `1.2.0`                             | `1.2.0` adds policy search with citations; `1.1.0` is refund-only; `1.0.0` keeps the caps in the prompt: the guard the policy engine replaced, kept for comparison |
+| `KEPT_INBOX_USER` / `KEPT_INBOX_PASSWORD`     | `kept` / dev default                | The inbox credential. The username is the actor recorded on every inbox action.                                                                                    |
+| `KEPT_POLICY_CONFIG`                          | unset                               | Path to a caps file, see [`config/README.md`](config/README.md); unset means the built-in defaults                                                                 |
+| `KEPT_ALLOWED_ORIGINS`                        | `*`                                 | CORS allowlist for the widget's origin, comma-separated                                                                                                            |
+| `PORT`                                        | `3100`                              | Agent service port                                                                                                                                                 |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | unset                               | Set both to export traces; unset, traces stay in the process and the boot log says so                                                                              |
 
 Caps are a JSON file: copy [`config/policy.example.json`](config/policy.example.json),
 which spells out the built-in defaults, edit the amounts, and name it in
