@@ -9,7 +9,9 @@ import path from 'node:path';
 import {
   AnthropicModelClient,
   CodePromptManager,
+  DEFAULT_OPENAI_EMBEDDING_MODEL,
   DEFAULT_POLICY_CONFIG,
+  EMBEDDING_DIMENSION,
   hashPolicyConfig,
   parsePolicyConfig,
   DemoBackend,
@@ -18,10 +20,15 @@ import {
   InMemoryRefundLedger,
   LangfuseExporter,
   OPENAI_REASONING_EFFORTS,
+  OpenAIEmbeddingClient,
   OpenAIModelClient,
+  PgKBRepository,
   PolicyEngine,
+  RetrievalService,
   Trace,
   InboxService,
+  assertStoreEmbeddingModel,
+  createDb,
   createToolRegistry,
   makeDemoOrders,
   runTurn,
@@ -87,6 +94,12 @@ export type AgentServiceConfig = {
   /** The caps file named by KEPT_POLICY_CONFIG, parsed and hashed; absent means the built-in defaults. */
   policy?: { source: string; config: PolicyEngineConfig; hash: string };
   langfuse?: { baseUrl: string; publicKey: string; secretKey: string };
+  /** The storefront whose policies every conversation of this deployment searches (KEPT_STORE_ID). */
+  storeId: string;
+  /** Postgres, for the policy knowledge base (DATABASE_URL). Required unless a retrieval service is injected. */
+  databaseUrl?: string;
+  /** The embedding client for policy search; OpenAI whichever provider answers the customer. */
+  embedding?: { apiKey: string; model: string };
 };
 
 /**
@@ -224,7 +237,19 @@ export function configFromEnv(env: NodeJS.ProcessEnv): AgentServiceConfig {
   const defaults = PROVIDER_DEFAULTS[provider];
   const reasoningEffort = provider === 'openai' ? reasoningEffortFromEnv(env, defaults) : undefined;
   const policy = policyFromEnv(env);
+  const databaseUrl = env['DATABASE_URL']?.trim();
+  const embeddingKey = env['OPENAI_API_KEY']?.trim();
   return {
+    storeId: env['KEPT_STORE_ID']?.trim() || 'loomhaven',
+    ...(databaseUrl ? { databaseUrl } : {}),
+    ...(embeddingKey
+      ? {
+          embedding: {
+            apiKey: embeddingKey,
+            model: env['KEPT_EMBEDDING_MODEL']?.trim() || DEFAULT_OPENAI_EMBEDDING_MODEL,
+          },
+        }
+      : {}),
     provider,
     model: env['KEPT_MODEL'] ?? defaults.model,
     maxTokens: Number(env['KEPT_MAX_TOKENS'] ?? defaults.maxTokens),
@@ -277,6 +302,43 @@ function buildModelClient(
       );
 }
 
+type RetrievalHandle = { service: RetrievalService; close: () => Promise<void> };
+
+/**
+ * The policy knowledge base: Postgres through Drizzle, questions embedded
+ * with OpenAI. The store's chunks must have been embedded by the same model
+ * the client uses, so the check runs here, before the first turn, and a
+ * mismatch stops the boot (retrieval decision 2).
+ */
+async function buildRetrieval(config: AgentServiceConfig): Promise<RetrievalHandle> {
+  if (!config.databaseUrl) {
+    throw new Error(
+      'DATABASE_URL is not set — the policy knowledge base lives in Postgres; run `pnpm stack:up` and copy .env.example to .env',
+    );
+  }
+  if (!config.embedding) {
+    throw new Error(
+      'OPENAI_API_KEY is not set — policy search embeds questions with OpenAI (text-embedding-3-small) whichever provider answers the customer',
+    );
+  }
+  const handle = createDb(config.databaseUrl);
+  const kbRepo = new PgKBRepository(handle.db);
+  const embeddingClient = new OpenAIEmbeddingClient(
+    { model: config.embedding.model, dimension: EMBEDDING_DIMENSION },
+    config.embedding.apiKey,
+  );
+  try {
+    await assertStoreEmbeddingModel(kbRepo, embeddingClient, config.storeId, {
+      allowEmpty: false,
+      expectedDimension: EMBEDDING_DIMENSION,
+    });
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
+  return { service: new RetrievalService(embeddingClient, kbRepo), close: handle.close };
+}
+
 // --- The service ------------------------------------------------------------
 
 export type HandleMessageResult =
@@ -312,6 +374,8 @@ export type AgentServiceDeps = {
   /** The attack driver and the eval runner pass an engine with their own config or clock. */
   policyEngine?: PolicyEngine;
   exporter?: TraceExporter;
+  /** Tests inject a service over fakes; production builds one over Postgres and OpenAI. */
+  retrieval?: RetrievalService;
 };
 
 export async function createAgentService(
@@ -331,7 +395,10 @@ export async function createAgentService(
   // stamped on every trace and every decision.
   const policyEngine =
     deps.policyEngine ?? new PolicyEngine(config.policy?.config ?? DEFAULT_POLICY_CONFIG);
-  const registry = createToolRegistry(backend, ledger, policyEngine);
+  const retrieval: RetrievalHandle = deps.retrieval
+    ? { service: deps.retrieval, close: async () => {} }
+    : await buildRetrieval(config);
+  const registry = createToolRegistry(backend, ledger, policyEngine, retrieval.service);
   const modelClient = buildModelClient(config, promptData, registry);
   const store = deps.store ?? new InMemoryConversationStore();
   const auditLog = deps.auditLog ?? new InMemoryAuditLog();
@@ -397,6 +464,10 @@ export async function createAgentService(
           modelClient,
           tools: registry,
           conversationId: conversation.id,
+          // One store per deployment in v0; the clock is the wall clock here
+          // and the case's clock in the eval runner.
+          storeId: config.storeId,
+          asOf: Date.now(),
           trace,
         });
 
@@ -413,6 +484,9 @@ export async function createAgentService(
   return {
     handleNewMessage,
     inbox,
-    shutdown: () => exporter?.flush() ?? Promise.resolve(),
+    shutdown: async () => {
+      await exporter?.flush();
+      await retrieval.close();
+    },
   };
 }
