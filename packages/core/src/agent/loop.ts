@@ -70,6 +70,8 @@ type LoopContext = {
   turnSpanId: string;
   limits: TurnLimits;
   conversationId: string;
+  storeId: string;
+  asOf: number;
 };
 
 /** One customer message in, one outcome out. The module comment has the state machine. */
@@ -80,6 +82,8 @@ export async function runTurn({
   tools,
   trace,
   conversationId,
+  storeId,
+  asOf,
   limits = {},
   logger = console,
 }: RunTurnParams): Promise<RunTurnResult> {
@@ -101,6 +105,8 @@ export async function runTurn({
       trace,
       turnSpanId: turnSpan.id,
       conversationId,
+      storeId,
+      asOf,
       limits: { ...DEFAULT_TURN_LIMITS, ...limits },
     });
   } catch (error) {
@@ -288,8 +294,11 @@ async function tracedToolCall(part: ToolCallPart, ctx: LoopContext): Promise<Set
       args: part.args,
       promptHash: ctx.modelConfig.promptData.hash,
       conversationId: ctx.conversationId,
-      // Decision spans nest under this call's span, not under the turn.
+      storeId: ctx.storeId,
+      asOf: ctx.asOf,
+      // Decision and retrieval spans nest under this call's span, not under the turn.
       startPolicyDecisionSpan: (payload) => ctx.trace.startPolicyDecisionSpan(span.id, payload),
+      startRetrievalSpan: (payload) => ctx.trace.startRetrievalSpan(span.id, payload),
     },
     ctx.limits.toolTimeoutMs,
   );

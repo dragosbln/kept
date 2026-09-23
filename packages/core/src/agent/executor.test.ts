@@ -10,7 +10,7 @@ import { executeToolCall } from './executor.js';
 import { defineTool } from '../tools/utils.js';
 import type { ToolRegistry } from '../tools/types.js';
 import { Trace } from '../tracing/trace.js';
-import type { StartPolicyDecisionPayload } from '../tracing/types.js';
+import type { StartPolicyDecisionPayload, StartRetrievalPayload } from '../tracing/types.js';
 
 const schema = z.object({ orderId: z.string().trim() });
 
@@ -25,10 +25,19 @@ const unreachableRefund = defineTool({
   },
 });
 
+const unreachableSearch = defineTool({
+  description: 'must not run',
+  inputSchema: z.object({}),
+  execute: async () => {
+    throw new Error('executor tests never search');
+  },
+});
+
 function registryWith(execute: Execute): ToolRegistry {
   return {
     lookup_order: defineTool({ description: 'test tool', inputSchema: schema, execute }),
     issue_refund: unreachableRefund,
+    search_policy: unreachableSearch,
   };
 }
 
@@ -47,8 +56,12 @@ const scratchTrace = (): Trace =>
 const context = {
   conversationId: 'conv-executor-test',
   promptHash: 'hash-executor-test',
+  storeId: 'loomhaven',
+  asOf: Date.UTC(2026, 8, 21),
   startPolicyDecisionSpan: (payload: StartPolicyDecisionPayload) =>
     scratchTrace().startPolicyDecisionSpan(null, payload),
+  startRetrievalSpan: (payload: StartRetrievalPayload) =>
+    scratchTrace().startRetrievalSpan(null, payload),
 };
 
 describe('executeToolCall', () => {
@@ -88,7 +101,10 @@ describe('executeToolCall', () => {
       name: 'lookup_order',
       conversationId: 'conv-distinct',
       promptHash: 'hash-distinct',
+      storeId: context.storeId,
+      asOf: context.asOf,
       startPolicyDecisionSpan: context.startPolicyDecisionSpan,
+      startRetrievalSpan: context.startRetrievalSpan,
       args: { orderId: 'order-7' },
     });
 

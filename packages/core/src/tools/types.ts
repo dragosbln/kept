@@ -1,9 +1,9 @@
 import { z } from 'zod';
 import type { ToolResultState } from '../messages.js';
-import type { PolicyDecisionSpan } from '../tracing/span.js';
-import type { StartPolicyDecisionPayload } from '../tracing/types.js';
+import type { PolicyDecisionSpan, RetrievalSpan } from '../tracing/span.js';
+import type { StartPolicyDecisionPayload, StartRetrievalPayload } from '../tracing/types.js';
 
-export type ToolName = 'lookup_order' | 'issue_refund';
+export type ToolName = 'lookup_order' | 'issue_refund' | 'search_policy';
 
 export type ToolResult = {
   resultState: ToolResultState;
@@ -38,6 +38,24 @@ export type ToolExecuteContext = {
    * one on a scratch trace.
    */
   startPolicyDecisionSpan: (payload: StartPolicyDecisionPayload) => PolicyDecisionSpan;
+  /**
+   * The storefront whose policies apply to this conversation. Set by the
+   * host, never by the model: a model-chosen store would be cross-store
+   * leakage one prompt injection away (retrieval decision 4).
+   */
+  storeId: string;
+  /**
+   * The conversation's clock, epoch ms, for the effective-date filter. The
+   * host passes wall-clock time; the eval runner and the simulator pass
+   * their own, which is why core never reads Date.now() here.
+   */
+  asOf: number;
+  /**
+   * Opens a retrieval span under this call's tool_execution span; the
+   * search tool opens exactly one per consultation and ends it on every
+   * path, like the policy-decision span.
+   */
+  startRetrievalSpan: (payload: StartRetrievalPayload) => RetrievalSpan;
 };
 
 export type ToolDefinition<TSchema extends z.ZodType> = {

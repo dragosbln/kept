@@ -15,6 +15,7 @@ import {
 } from './client.contract.js';
 import { toModelToolRegistry } from './utils.js';
 import { createToolRegistry } from '../tools/registry.js';
+import { stubRetrievalService } from '../retrieval/testing.js';
 import { DEFAULT_POLICY_CONFIG, PolicyEngine } from '../policy/index.js';
 import type { ModelClientConfig } from './types.js';
 import type { Message } from '../messages.js';
@@ -63,6 +64,7 @@ const config: ModelClientConfig = {
       unreachableBackend,
       unreachableLedger,
       new PolicyEngine(DEFAULT_POLICY_CONFIG),
+      stubRetrievalService(),
     ),
   ),
 };
@@ -210,6 +212,7 @@ describe('OpenAIModelClient request shape', () => {
     expect(tools.map((tool) => (tool['function'] as { name: string }).name)).toEqual([
       'lookup_order',
       'issue_refund',
+      'search_policy',
     ]);
     expect(tools[0]).toEqual({
       type: 'function',

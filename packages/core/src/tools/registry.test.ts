@@ -21,6 +21,11 @@ import {
   customerKeyFor,
   type RefundLedger,
 } from '../refund-ledger/index.js';
+import { RetrievalError, RetrievalService } from '../retrieval/service.js';
+import { DEFAULT_RETRIEVAL_CONFIG } from '../retrieval/config.js';
+import { FakeEmbeddingClient } from '../retrieval/embedding/fake.js';
+import { ScriptedKBRepository, stubRetrievalService } from '../retrieval/testing.js';
+import type { RetrievalResult } from '../retrieval/types.js';
 
 const order: Order = makeDemoOrders()[0]!;
 const orderById = (id: string): Order => makeDemoOrders().find((candidate) => candidate.id === id)!;
@@ -63,12 +68,18 @@ const scratchTrace = (): Trace =>
 /** The default caps; every test below names amounts relative to them ($100 per call and order, $150 per customer). */
 const policyEngine = new PolicyEngine(DEFAULT_POLICY_CONFIG);
 
+/** A retrieval service the order and refund tests never reach. */
+const retrieval = stubRetrievalService();
+
 const ctx: ToolExecuteContext = {
   callId: 'call_1',
   conversationId: 'conv-registry-test',
   promptHash: 'hash-registry-test',
+  storeId: 'loomhaven',
+  asOf: Date.UTC(2026, 8, 21),
   signal: new AbortController().signal,
   startPolicyDecisionSpan: (payload) => scratchTrace().startPolicyDecisionSpan(null, payload),
+  startRetrievalSpan: (payload) => scratchTrace().startRetrievalSpan(null, payload),
 };
 
 /** A context whose decision spans land on one trace, for tests that read the decision back. */
@@ -100,7 +111,7 @@ function decisionSpanOf(trace: Trace): PolicyDecisionSpan {
 describe('lookup_order', () => {
   it('returns ok with the sanitized order when the backend finds it', async () => {
     const { backend, ledger } = fakeBackend([order]);
-    const registry = createToolRegistry(backend, ledger, policyEngine);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
     const result = await registry.lookup_order.execute({ orderId: order.id }, ctx);
     expect(result.resultState).toBe('ok');
     // Sanitization removes exactly the email today; a new sensitive field on
@@ -111,7 +122,7 @@ describe('lookup_order', () => {
 
   it('never leaks the customer email, in neither result nor response', async () => {
     const { backend, ledger } = fakeBackend([order]);
-    const registry = createToolRegistry(backend, ledger, policyEngine);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
     const result = await registry.lookup_order.execute({ orderId: order.id }, ctx);
     expect(result.result).not.toHaveProperty('email');
     expect(result.response).not.toContain(order.email);
@@ -119,7 +130,7 @@ describe('lookup_order', () => {
 
   it('presents money pre-formatted to the model and keeps raw minor units out of its view', async () => {
     const { backend, ledger } = fakeBackend([order]);
-    const registry = createToolRegistry(backend, ledger, policyEngine);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
     const result = await registry.lookup_order.execute({ orderId: order.id }, ctx);
     const view = JSON.parse(result.response) as {
       items: Record<string, unknown>[];
@@ -139,21 +150,21 @@ describe('lookup_order', () => {
   it('formats non-USD currencies with their own symbol', async () => {
     const euroOrder = makeDemoOrders().find((candidate) => candidate.currency === 'EUR')!;
     const { backend, ledger } = fakeBackend([euroOrder]);
-    const registry = createToolRegistry(backend, ledger, policyEngine);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
     const result = await registry.lookup_order.execute({ orderId: euroOrder.id }, ctx);
     expect((JSON.parse(result.response) as { total: string }).total).toBe('€159.00');
   });
 
   it('asks the backend for exactly the requested order id', async () => {
     const { backend, ledger, requestedIds } = fakeBackend([order]);
-    const registry = createToolRegistry(backend, ledger, policyEngine);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
     await registry.lookup_order.execute({ orderId: order.id }, ctx);
     expect(requestedIds).toEqual([order.id]);
   });
 
   it('settles as failed — not a throw — when the order does not exist', async () => {
     const { backend, ledger } = fakeBackend([]);
-    const registry = createToolRegistry(backend, ledger, policyEngine);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
     const result = await registry.lookup_order.execute({ orderId: 'no-such-order' }, ctx);
     expect(result).toEqual({
       resultState: 'failed',
@@ -218,7 +229,7 @@ describe('issue_refund', () => {
         return backend.issueRefund(key, params);
       },
     };
-    const registry = createToolRegistry(observing, ledger, policyEngine);
+    const registry = createToolRegistry(observing, ledger, policyEngine, retrieval);
 
     const result = await registry.issue_refund.execute(args, refundCtx('call-ok'));
 
@@ -256,7 +267,7 @@ describe('issue_refund', () => {
 
   it('never carries the customer key, the email or raw minor units in the response', async () => {
     const { backend, ledger } = fakeBackend([delivered]);
-    const registry = createToolRegistry(backend, ledger, policyEngine);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
     const result = await registry.issue_refund.execute(args, refundCtx('call-key'));
     expect(result.resultState).toBe('ok');
     expect(result.response).not.toContain(customerKeyFor(delivered));
@@ -267,7 +278,7 @@ describe('issue_refund', () => {
 
   it('over-quantity is denied by eligibility before the backend is asked', async () => {
     const { backend, ledger } = fakeBackend([delivered]);
-    const registry = createToolRegistry(backend, ledger, policyEngine);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
     const result = await registry.issue_refund.execute(
       { ...args, quantity: 2 },
       refundCtx('call-over'),
@@ -286,7 +297,7 @@ describe('issue_refund', () => {
       issueRefund: (key, params) => demo.issueRefund(key, params),
     };
     const ledger = new InMemoryRefundLedger();
-    const registry = createToolRegistry(backend, ledger, policyEngine);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
     const result = await registry.issue_refund.execute(args, refundCtx('call-disagree'));
     expect(result.resultState).toBe('failed');
     expect(result.response).toContain('quantity_exceeds_unrefunded');
@@ -309,7 +320,7 @@ describe('issue_refund', () => {
         return backend.issueRefund(key, params);
       },
     };
-    const registry = createToolRegistry(counting, ledger, policyEngine);
+    const registry = createToolRegistry(counting, ledger, policyEngine, retrieval);
     const result = await registry.issue_refund.execute(input, refundCtx('call-zone1'));
     expect(result.resultState).toBe('failed');
     expect(await ledger.list()).toEqual([]);
@@ -322,7 +333,7 @@ describe('issue_refund', () => {
       ...backend,
       issueRefund: async () => ({ status: 'unknown' }),
     };
-    const registry = createToolRegistry(vanishing, ledger, policyEngine);
+    const registry = createToolRegistry(vanishing, ledger, policyEngine, retrieval);
     const result = await registry.issue_refund.execute(args, refundCtx('call-unknown'));
     expect(result.resultState).toBe('unknown');
     expect(result.response).toContain('Do not retry');
@@ -340,6 +351,7 @@ describe('issue_refund', () => {
         backend,
         ledgerBreakingOn(ledger, ['settleRefundRecord'], error),
         policyEngine,
+        retrieval,
       );
 
       const result = await registry.issue_refund.execute(args, refundCtx('call-settle-throw'));
@@ -373,6 +385,7 @@ describe('issue_refund', () => {
       counting,
       ledgerBreakingOn(ledger, ['recordRefund'], () => new Error('ledger down')),
       policyEngine,
+      retrieval,
     );
     const { ctx: traced, trace } = tracedCtx('call-record-throw');
 
@@ -382,7 +395,10 @@ describe('issue_refund', () => {
       name: 'issue_refund',
       conversationId: traced.conversationId,
       promptHash: traced.promptHash,
+      storeId: traced.storeId,
+      asOf: traced.asOf,
       startPolicyDecisionSpan: traced.startPolicyDecisionSpan,
+      startRetrievalSpan: traced.startRetrievalSpan,
       args,
     });
 
@@ -403,6 +419,7 @@ describe('issue_refund', () => {
         () => new Error('ledger down'),
       ),
       policyEngine,
+      retrieval,
     );
 
     const result = await registry.issue_refund.execute(args, refundCtx('call-double-throw'));
@@ -431,7 +448,7 @@ describe('issue_refund', () => {
         return backend.issueRefund(key, params);
       },
     };
-    const registry = createToolRegistry(counting, ledger, policyEngine);
+    const registry = createToolRegistry(counting, ledger, policyEngine, retrieval);
     const { ctx: traced, trace } = tracedCtx('call-approval');
 
     const result = await registry.issue_refund.execute(
@@ -465,7 +482,7 @@ describe('issue_refund', () => {
         return backend.issueRefund(key, params);
       },
     };
-    const registry = createToolRegistry(counting, ledger, policyEngine);
+    const registry = createToolRegistry(counting, ledger, policyEngine, retrieval);
     const { ctx: traced, trace } = tracedCtx('call-deny');
 
     const result = await registry.issue_refund.execute(
@@ -484,7 +501,7 @@ describe('issue_refund', () => {
 
   it('deny, already requested: a second ask for a held line is refused without a second record', async () => {
     const { backend, ledger } = fakeBackend([delivered]);
-    const registry = createToolRegistry(backend, ledger, policyEngine);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
 
     const first = await registry.issue_refund.execute(args, refundCtx('call-first'));
     const { ctx: traced, trace } = tracedCtx('call-again');
@@ -501,7 +518,7 @@ describe('issue_refund', () => {
   it('split refund through the tool: the second line lands in the queue with the first as its context', async () => {
     const boots = orderById('order-1002');
     const { backend, ledger } = fakeBackend([boots]);
-    const registry = createToolRegistry(backend, ledger, policyEngine);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
 
     const first = await registry.issue_refund.execute(
       { orderId: 'order-1002', orderItemId: 'order-1002-line-1', quantity: 1 }, // 1 × $89.00
@@ -535,7 +552,7 @@ describe('issue_refund', () => {
   it('never reports prior refunds, limits or consumed amounts to the model; the trace carries them', async () => {
     const boots = orderById('order-1002'); // same customer as order-1005
     const { backend, ledger } = fakeBackend([boots, delivered]);
-    const registry = createToolRegistry(backend, ledger, policyEngine);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
 
     const first = await registry.issue_refund.execute(
       { orderId: 'order-1002', orderItemId: 'order-1002-line-1', quantity: 1 }, // 1 × $89.00
@@ -558,6 +575,102 @@ describe('issue_refund', () => {
       outcome: 'require_approval',
       consumedAmountMinorUnits: 8900,
       contributingRecordIds: [firstRecord!.id],
+    });
+  });
+});
+
+// --- search_policy ------------------------------------------------------------
+// The shell around the hand-written presenter: scope from the context, the
+// span on every path, the state mapping of the tool pin (a verdict is ok, a
+// retrieval failure is failed with one retry allowed).
+
+class FailingRetrieval extends RetrievalService {
+  constructor() {
+    super(new FakeEmbeddingClient(), new ScriptedKBRepository(), DEFAULT_RETRIEVAL_CONFIG);
+  }
+  override async retrieve(): Promise<RetrievalResult> {
+    throw new RetrievalError('embedding_failed', 'embedding endpoint unreachable');
+  }
+}
+
+class CannedRetrieval extends RetrievalService {
+  constructor(private readonly canned: RetrievalResult) {
+    super(new FakeEmbeddingClient(), new ScriptedKBRepository(), DEFAULT_RETRIEVAL_CONFIG);
+  }
+  override async retrieve(): Promise<RetrievalResult> {
+    return this.canned;
+  }
+}
+
+type RetrievalSpanPayload = Extract<CompletedSpanPayload, { kind: 'retrieval' }>;
+
+function searchRegistry(service: RetrievalService): {
+  registry: ReturnType<typeof createToolRegistry>;
+  trace: Trace;
+  ctx: ToolExecuteContext;
+} {
+  const { backend, ledger } = fakeBackend(makeDemoOrders());
+  const trace = scratchTrace();
+  return {
+    registry: createToolRegistry(backend, ledger, policyEngine, service),
+    trace,
+    ctx: {
+      ...ctx,
+      callId: 'call-search',
+      startRetrievalSpan: (payload) => trace.startRetrievalSpan(null, payload),
+    },
+  };
+}
+
+function retrievalSpanOf(trace: Trace): RetrievalSpanPayload {
+  const span = trace
+    .end()
+    .spans.find((candidate): candidate is RetrievalSpanPayload => candidate.kind === 'retrieval');
+  if (!span) throw new Error('no retrieval span recorded');
+  return span;
+}
+
+describe('search_policy', () => {
+  it('takes the question alone: the store and the clock come from the context (decision 4)', () => {
+    const { registry } = searchRegistry(stubRetrievalService());
+    const parsed = registry.search_policy.inputSchema.safeParse({
+      question: 'is return shipping free',
+      storeId: 'averlane',
+    });
+    // zod strips unknown keys: a model-supplied store id never reaches the tool.
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data).toEqual({ question: 'is return shipping free' });
+  });
+
+  it('a retrieval failure settles failed with one retry allowed, and errors the span', async () => {
+    const { registry, trace, ctx: searchCtx } = searchRegistry(new FailingRetrieval());
+    const result = await registry.search_policy.execute(
+      { question: 'is return shipping free' },
+      searchCtx,
+    );
+    expect(result.resultState).toBe('failed');
+    expect(result.response).toMatch(/retry once/);
+    expect(retrievalSpanOf(trace)).toMatchObject({
+      status: 'error',
+      errorType: 'embedding_failed',
+      query: 'is return shipping free',
+      scope: { storeId: 'loomhaven', asOf: ctx.asOf },
+      config: DEFAULT_RETRIEVAL_CONFIG,
+    });
+  });
+
+  it('a no_match verdict is a successful call: ok, never failed, with the result on the span', async () => {
+    const canned: RetrievalResult = { verdict: 'no_match', chunks: [] };
+    const { registry, trace, ctx: searchCtx } = searchRegistry(new CannedRetrieval(canned));
+    const result = await registry.search_policy.execute(
+      { question: 'can I return a hat I bought on the moon' },
+      searchCtx,
+    );
+    expect(result.resultState).toBe('ok');
+    expect(retrievalSpanOf(trace)).toMatchObject({
+      status: 'completed',
+      verdict: 'no_match',
+      chunks: [],
     });
   });
 });

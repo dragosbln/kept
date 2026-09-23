@@ -15,6 +15,7 @@ import {
 } from './client.contract.js';
 import { toModelToolRegistry } from './utils.js';
 import { createToolRegistry } from '../tools/registry.js';
+import { stubRetrievalService } from '../retrieval/testing.js';
 import { DEFAULT_POLICY_CONFIG, PolicyEngine } from '../policy/index.js';
 import type { ModelClientConfig } from './types.js';
 import type { Message } from '../messages.js';
@@ -63,6 +64,7 @@ const config: ModelClientConfig = {
       unreachableBackend,
       unreachableLedger,
       new PolicyEngine(DEFAULT_POLICY_CONFIG),
+      stubRetrievalService(),
     ),
   ),
 };
@@ -173,7 +175,11 @@ describe('AnthropicModelClient request shape', () => {
     await client.callModel(contractCustomerTurn);
     const tools = body()['tools'] as Record<string, unknown>[];
     // One definition per registry entry, in registry order.
-    expect(tools.map((tool) => tool['name'])).toEqual(['lookup_order', 'issue_refund']);
+    expect(tools.map((tool) => tool['name'])).toEqual([
+      'lookup_order',
+      'issue_refund',
+      'search_policy',
+    ]);
     // toEqual is exact on keys: a leaked camelCase `inputSchema` (or any
     // other stray field) fails this test.
     expect(tools[0]).toEqual({

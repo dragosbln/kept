@@ -9,7 +9,10 @@ import {
 } from '../refund-ledger/index.js';
 import type { PolicyEngine } from '../policy/engine.js';
 import type { PolicyRequest } from '../policy/types.js';
-import { executeRefund, type RefundExecution } from '../refunds/execute.js';
+import { describeError, executeRefund, type RefundExecution } from '../refunds/execute.js';
+import { RetrievalError, type RetrievalService } from '../retrieval/service.js';
+import type { RetrievalResult } from '../retrieval/types.js';
+import { presentRetrieval } from './present-retrieval.js';
 
 // Ids are opaque strings and travel as written. Small models strip prefixes
 // ("1002" for "order-1002") when the schema leaves them to guess, and a
@@ -18,6 +21,15 @@ const ORDER_ID_DESCRIPTION =
   'The order id exactly as the customer wrote it, prefix included, for example "order-1002". Never shorten or reformat it.';
 
 const LookupOrderInputSchema = z.object({ orderId: z.string().describe(ORDER_ID_DESCRIPTION) });
+
+const SearchPolicyInputSchema = z.object({
+  question: z
+    .string()
+    .min(1)
+    .describe(
+      'The customer\'s policy question in plain words, one topic per call, for example "is return shipping free" or "how long do I have to return a jacket".',
+    ),
+});
 
 const IssueRefundInputSchema = z.object({
   orderId: z.string().describe(ORDER_ID_DESCRIPTION),
@@ -98,6 +110,14 @@ function presentDeny(decided: Extract<RecordRefundResult, { outcome: 'deny' }>):
 }
 
 /**
+ * A retrieval that produced no result: nothing was written, so one retry is
+ * allowed; the failure itself is in `result` for the trace. A `no_match`
+ * verdict never comes through here, it is an `ok` result with a refusal.
+ */
+const SEARCH_FAILED_RESPONSE =
+  'Policy search failed before any answer was found. You may retry once with the same question; if it fails again, tell the customer a person will confirm the policy.';
+
+/**
  * The queue write succeeded, the refund did not happen. `ok` because the
  * tool's own effect is done; the text carries the distinction, and so do
  * the pending record and the decision span. A failed state would reach
@@ -111,6 +131,7 @@ export function createToolRegistry(
   backend: OrderBackend,
   ledger: RefundLedger,
   policyEngine: PolicyEngine,
+  retrieval: RetrievalService,
 ): ToolRegistry {
   return {
     lookup_order: defineTool({
@@ -211,6 +232,34 @@ export function createToolRegistry(
             decided satisfies never;
             return settle.failed('Refund not issued. Do not retry for this item.');
         }
+      },
+    }),
+    search_policy: defineTool({
+      description:
+        "Search the store's return, refund and shipping policies. Use it before answering any question about policy, windows, fees, refund timing or eligibility. The result says whether an answer is grounded in binding policy, found only in help-center articles, or not found, and what you may tell the customer.",
+      inputSchema: SearchPolicyInputSchema,
+      execute: async (input, ctx) => {
+        // Scope and clock come from the context, never from the model
+        // (retrieval decision 4). The span opens before the question is
+        // embedded and ends on every path.
+        const scope = { storeId: ctx.storeId, asOf: ctx.asOf };
+        const span = ctx.startRetrievalSpan({
+          query: input.question,
+          scope,
+          config: retrieval.config,
+        });
+        let result: RetrievalResult;
+        try {
+          result = await retrieval.retrieve(input.question, scope);
+        } catch (error) {
+          span.error(error instanceof RetrievalError ? error.kind : '_OTHER');
+          if (error instanceof RetrievalError) {
+            return settle.failed(SEARCH_FAILED_RESPONSE, describeError(error));
+          }
+          throw error;
+        }
+        span.end(result);
+        return presentRetrieval(result);
       },
     }),
   };
