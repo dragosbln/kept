@@ -1,6 +1,7 @@
 import {
   ModelCallSpan,
   PolicyDecisionSpan,
+  RetrievalSpan,
   ToolExecutionSpan,
   TurnSpan,
   type AnySpan,
@@ -10,6 +11,7 @@ import type {
   CompletedTrace,
   StartModelCallPayload,
   StartPolicyDecisionPayload,
+  StartRetrievalPayload,
   StartToolExecutionPayload,
   StartTurnPayload,
   TraceConfig,
@@ -86,6 +88,14 @@ export class Trace {
   ): PolicyDecisionSpan {
     this.guardNotEnded();
     const span = new PolicyDecisionSpan(this.payload.id, parentSpanId, payload);
+    this.spans.push(span);
+    return span;
+  }
+
+  /** Parent is the tool_execution span of the search_policy call that asked. */
+  startRetrievalSpan(parentSpanId: string | null, payload: StartRetrievalPayload): RetrievalSpan {
+    this.guardNotEnded();
+    const span = new RetrievalSpan(this.payload.id, parentSpanId, payload);
     this.spans.push(span);
     return span;
   }

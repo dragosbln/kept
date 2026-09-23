@@ -19,7 +19,10 @@ export type ExecuteToolParams<TSchema extends z.ZodType> = {
   // Context the tool receives as-is; see ToolExecuteContext for what each is for.
   conversationId: string;
   promptHash: string;
+  storeId: string;
+  asOf: number;
   startPolicyDecisionSpan: ToolExecuteContext['startPolicyDecisionSpan'];
+  startRetrievalSpan: ToolExecuteContext['startRetrievalSpan'];
 };
 
 /** A tool call as the model requested it, addressed by name into a registry. */
@@ -30,7 +33,10 @@ export type ExecuteToolCallArgs = {
   // Context the tool receives as-is; see ToolExecuteContext for what each is for.
   conversationId: string;
   promptHash: string;
+  storeId: string;
+  asOf: number;
   startPolicyDecisionSpan: ToolExecuteContext['startPolicyDecisionSpan'];
+  startRetrievalSpan: ToolExecuteContext['startRetrievalSpan'];
 };
 
 /**
@@ -77,6 +83,10 @@ export type RunTurnParams = {
    * chooses to name traces.
    */
   conversationId: string;
+  /** The storefront this conversation belongs to; passed to every tool of the turn (ToolExecuteContext.storeId). */
+  storeId: string;
+  /** The turn's clock, epoch ms; passed to every tool of the turn (ToolExecuteContext.asOf). */
+  asOf: number;
   limits?: Partial<TurnLimits>;
   logger?: TurnLogger;
 };

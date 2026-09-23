@@ -45,6 +45,11 @@ const server = serve({ fetch: app.fetch, port: PORT }, (info) => {
     ? `${config.policy.source} · cfg ${config.policy.hash.slice(0, 12)}`
     : `built-in defaults · cfg ${hashPolicyConfig(DEFAULT_POLICY_CONFIG).slice(0, 12)}`;
   console.log(`caps: ${policy}`);
+  console.log(
+    config.databaseUrl
+      ? `policy search: on · store ${config.storeId} · ${config.embedding?.model ?? 'no embedding client'}`
+      : 'policy search: off (DATABASE_URL unset) · policy questions are escalated',
+  );
   console.log(`approval inbox at http://localhost:${info.port}/inbox (user: ${inboxUser})`);
 });
 

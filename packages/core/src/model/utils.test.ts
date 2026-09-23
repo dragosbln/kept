@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { toModelToolRegistry } from './utils.js';
 import { createToolRegistry } from '../tools/registry.js';
+import { stubRetrievalService } from '../retrieval/testing.js';
 import { DEFAULT_POLICY_CONFIG, PolicyEngine } from '../policy/index.js';
 import type { OrderBackend } from '../backend/order-backend.js';
 import type { RefundLedger } from '../refund-ledger/index.js';
@@ -47,11 +48,16 @@ describe('toModelToolRegistry', () => {
       unreachableBackend,
       unreachableLedger,
       new PolicyEngine(DEFAULT_POLICY_CONFIG),
+      stubRetrievalService(),
     ),
   );
 
   it('emits one definition per registry entry, named by its key', () => {
-    expect(definitions.map((d) => d.name)).toEqual(['lookup_order', 'issue_refund']);
+    expect(definitions.map((d) => d.name)).toEqual([
+      'lookup_order',
+      'issue_refund',
+      'search_policy',
+    ]);
   });
 
   it('passes the description through', () => {

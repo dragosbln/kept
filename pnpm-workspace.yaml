@@ -37,3 +37,8 @@ catalog:
   # suite.
   esbuild: ^0.28.0
   'happy-dom': ^20.0.0
+  # Retrieval store: Drizzle over postgres.js, pgvector column types come
+  # with drizzle-orm. drizzle-kit is dev-only (migration generation).
+  'drizzle-orm': ^0.45.0
+  postgres: ^3.4.0
+  'drizzle-kit': ^0.31.0

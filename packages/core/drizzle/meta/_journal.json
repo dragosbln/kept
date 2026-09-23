@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1789992348406,
+      "tag": "0000_kb_chunks",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790152170393,
+      "tag": "0001_kb_chunks_store_scoped_key",
+      "breakpoints": true
+    }
+  ]
+}

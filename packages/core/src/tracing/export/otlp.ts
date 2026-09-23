@@ -59,7 +59,8 @@ function mapOperationName(spanKind: SpanKind): 'chat' | 'execute_tool' | null {
       return 'execute_tool';
     case 'turn':
     case 'policy_decision':
-      // No GenAI operation covers either; the span name carries the kind.
+    case 'retrieval':
+      // No GenAI operation covers these; the span name carries the kind.
       return null;
     default:
       spanKind satisfies never;
@@ -82,10 +83,12 @@ function millisecondsToNanoStr(input: number): string {
 /**
  * Langfuse's own classification, emitted explicitly because an explicit
  * type always wins over its inference from gen_ai.* attributes. The turn is
- * the agent, the policy decision is a guardrail; those two would otherwise
- * be plain spans.
+ * the agent, the policy decision is a guardrail, the retrieval is a
+ * retriever; those three would otherwise be plain spans.
  */
-function mapObservationType(spanKind: SpanKind): 'agent' | 'generation' | 'tool' | 'guardrail' {
+function mapObservationType(
+  spanKind: SpanKind,
+): 'agent' | 'generation' | 'tool' | 'guardrail' | 'retriever' {
   switch (spanKind) {
     case 'turn':
       return 'agent';
@@ -95,6 +98,8 @@ function mapObservationType(spanKind: SpanKind): 'agent' | 'generation' | 'tool'
       return 'tool';
     case 'policy_decision':
       return 'guardrail';
+    case 'retrieval':
+      return 'retriever';
     default:
       spanKind satisfies never;
       return 'agent';
@@ -295,6 +300,28 @@ function mapSpanAttributes(trace: CompletedTrace, span: CompletedSpanPayload): O
         str(langfuseAttributes.output, verdict),
         str(langfuseAttributes.outcomeType, span.outcome),
         str(langfuseAttributes.outcomeReason, span.reason),
+      ];
+    }
+    case 'retrieval': {
+      // The question with its scope and thresholds is the input pane; the
+      // verdict with the ranked chunks is the output pane. kept.* carries
+      // the same facts for any other consumer.
+      const input = JSON.stringify({ query: span.query, scope: span.scope, config: span.config });
+      const output =
+        span.verdict === undefined
+          ? undefined
+          : JSON.stringify({ verdict: span.verdict, chunks: span.chunks });
+      return [
+        ...attributes,
+        str(keptAttributes.retrievalVerdict, span.verdict),
+        str(keptAttributes.retrievalStoreId, span.scope.storeId),
+        int(keptAttributes.retrievalAsOf, span.scope.asOf),
+        str(keptAttributes.retrievalQuery, span.query),
+        str(keptAttributes.retrievalConfig, JSON.stringify(span.config)),
+        str(keptAttributes.retrievalChunks, span.chunks ? JSON.stringify(span.chunks) : undefined),
+        str(langfuseAttributes.input, input),
+        str(langfuseAttributes.output, output),
+        str(langfuseAttributes.outcomeType, span.verdict),
       ];
     }
     default:

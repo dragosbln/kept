@@ -12,6 +12,7 @@ import {
   InMemoryRefundLedger,
   customerKeyFor,
   makeDemoOrders,
+  stubRetrievalService,
 } from '@kept-hq/core';
 import type { DecisionResult, RefundLedgerRecord } from '@kept-hq/core';
 import { createApp } from './app.js';
@@ -24,6 +25,7 @@ const config: AgentServiceConfig = {
   promptVersion: '1.1.0',
   backendKind: 'demo',
   apiKey: 'test-key-never-used',
+  storeId: 'loomhaven',
 };
 
 const INBOX = { user: 'dragos', password: 'inbox-secret' };
@@ -55,6 +57,7 @@ async function setup(): Promise<World> {
     { role: 'user', parts: [{ type: 'text', content: 'Refund the jacket.' }] },
   ]);
   const service = await createAgentService(config, {
+    retrieval: stubRetrievalService(),
     backend: new DemoBackend(makeDemoOrders()),
     ledger,
     store,
@@ -143,6 +146,7 @@ describe('inbox auth', () => {
     expect(await page.text()).toContain('Acting as <b>dragos</b>');
 
     const service = await createAgentService(config, {
+      retrieval: stubRetrievalService(),
       backend: new DemoBackend(makeDemoOrders()),
     });
     const app = createApp(service, {

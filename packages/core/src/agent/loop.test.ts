@@ -14,6 +14,7 @@ import { runTurn } from './loop.js';
 import { Trace } from '../tracing/trace.js';
 import type { CompletedTrace, TraceConfig } from '../tracing/types.js';
 import { createToolRegistry } from '../tools/registry.js';
+import { stubRetrievalService } from '../retrieval/testing.js';
 import { defineTool } from '../tools/utils.js';
 import type { ToolRegistry } from '../tools/types.js';
 import { DemoBackend } from '../backend/demo.js';
@@ -96,7 +97,11 @@ const registry = createToolRegistry(
   new DemoBackend(makeDemoOrders()),
   new InMemoryRefundLedger(),
   new PolicyEngine(DEFAULT_POLICY_CONFIG),
+  stubRetrievalService(),
 );
+
+/** Scope every turn here runs under; the tools never search, so any store and clock do. */
+const SCOPE = { storeId: 'loomhaven', asOf: Date.UTC(2026, 8, 21) };
 
 type RunReturnType = {
   trace: Trace;
@@ -116,6 +121,7 @@ function run(script: CallModelResponse[], overrides: RunOverrides = {}): RunRetu
     tools: registry,
     trace,
     conversationId: traceConfig.sessionId,
+    ...SCOPE,
     ...overrides,
   });
   return { trace, modelClient, promise };
@@ -225,6 +231,7 @@ describe('runTurn', () => {
         },
       }),
       issue_refund: registry.issue_refund,
+      search_policy: registry.search_policy,
     };
 
     await run(
@@ -276,6 +283,7 @@ describe('runTurn', () => {
         },
       }),
       issue_refund: registry.issue_refund,
+      search_policy: registry.search_policy,
     };
 
     const { trace, promise } = run(
@@ -522,6 +530,7 @@ describe('runTurn', () => {
       modelClient,
       tools: registry,
       conversationId: traceConfig.sessionId,
+      ...SCOPE,
       trace,
     });
 
@@ -545,6 +554,7 @@ describe('runTurn', () => {
       modelClient: throwingClient,
       tools: registry,
       conversationId: traceConfig.sessionId,
+      ...SCOPE,
       trace,
       logger,
     });
@@ -576,6 +586,7 @@ describe('runTurn', () => {
         execute: () => new Promise(() => {}),
       }),
       issue_refund: registry.issue_refund,
+      search_policy: registry.search_policy,
     };
     const { trace, promise } = run(
       [
