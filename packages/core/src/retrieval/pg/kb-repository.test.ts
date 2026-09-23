@@ -91,6 +91,19 @@ describe.skipIf(!DATABASE_URL)('PgKBRepository (Postgres from compose)', () => {
     expect(await repo.deleteStore(scratchStore)).toBe(2);
   });
 
+  it("the same chunk id in two stores is two rows: one store's ingest never touches another's", async () => {
+    const twin = `${scratchStore}-twin`;
+    await repo.upsertBatch([
+      await chunk({ id: 'T@1#§1', storeId: scratchStore, tier: 'binding', text: 'one' }),
+    ]);
+    await repo.upsertBatch([
+      await chunk({ id: 'T@1#§1', storeId: twin, tier: 'binding', text: 'one, elsewhere' }),
+    ]);
+    expect(await repo.getEmbeddingModelsForStore(scratchStore)).toEqual([MODEL]);
+    expect(await repo.deleteStore(twin)).toBe(1);
+    expect(await repo.deleteStore(scratchStore)).toBe(1);
+  });
+
   it('lists the distinct embedding models of a store, and nothing for an unknown store', async () => {
     await repo.upsertBatch([
       await chunk({

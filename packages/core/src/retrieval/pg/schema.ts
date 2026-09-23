@@ -4,7 +4,16 @@
 // the effective-date predicate is an integer comparison.
 
 import { sql } from 'drizzle-orm';
-import { bigint, check, index, pgTable, text, timestamp, vector } from 'drizzle-orm/pg-core';
+import {
+  bigint,
+  check,
+  index,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+  vector,
+} from 'drizzle-orm/pg-core';
 import { KB_CHUNK_TIERS } from '../types.js';
 
 /** The vector column's width. text-embedding-3-small's native size; the client is asked for it explicitly. */
@@ -13,7 +22,7 @@ export const EMBEDDING_DIMENSION = 1536;
 export const kbChunks = pgTable(
   'kb_chunks',
   {
-    id: text('id').primaryKey(),
+    id: text('id').notNull(),
     storeId: text('store_id').notNull(),
     docId: text('doc_id').notNull(),
     docTitle: text('doc_title').notNull(),
@@ -28,6 +37,11 @@ export const kbChunks = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    // A chunk id is unique within a store, not globally: two merchants may
+    // hold the same document id, and one store's ingest must never touch
+    // another store's rows. A global key let a test's upsert capture the
+    // demo corpus and its cleanup delete it.
+    primaryKey({ columns: [table.storeId, table.id] }),
     // Every query filters by store and tier first (decision 3). No vector
     // index: at a few hundred rows an exact scan is both faster and simpler.
     index('kb_chunks_store_tier_idx').on(table.storeId, table.tier),

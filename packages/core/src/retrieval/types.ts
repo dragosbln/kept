@@ -19,7 +19,11 @@ export type EmbeddingVector = number[];
  * ingest checks can refuse a client that disagrees (decision 2).
  */
 export type KBChunk = {
-  /** Deterministic, `docId@version#sectionRef`: re-ingesting a fixture upserts instead of duplicating. */
+  /**
+   * Deterministic, `docId@version#sectionRef`, unique within a store: the
+   * key is (storeId, id), so re-ingesting a fixture upserts instead of
+   * duplicating, and two stores may hold the same document id.
+   */
   id: string;
   /** Where the policy applies: one merchant storefront. A scope filter, never model-chosen (decision 4). */
   storeId: string;

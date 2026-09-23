@@ -108,9 +108,8 @@ export class PgKBRepository implements KBRepository {
         .insert(kbChunks)
         .values(slice)
         .onConflictDoUpdate({
-          target: kbChunks.id,
+          target: [kbChunks.storeId, kbChunks.id],
           set: {
-            storeId: sql`excluded.store_id`,
             docId: sql`excluded.doc_id`,
             docTitle: sql`excluded.doc_title`,
             sectionRef: sql`excluded.section_ref`,
