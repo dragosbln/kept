@@ -8,6 +8,8 @@ import type {
   PolicyRequest,
   RequireApprovalReason,
 } from '../policy/types.js';
+import type { RetrievalScope, RetrievalVerdict, RetrievedChunk } from '../retrieval/types.js';
+import type { RetrievalServiceConfig } from '../retrieval/config.js';
 
 /** Which commerce backend served the conversation's tools. */
 export type BackendKind = 'demo' | 'medusa';
@@ -124,6 +126,26 @@ export type StartPolicyDecisionPayload = Omit<
 >;
 
 /**
+ * One consultation of the knowledge base by search_policy, parented by the
+ * tool_execution span that asked. Start carries what the query ran with:
+ * the question, the scope the host supplied (never the model) and the
+ * thresholds. End carries the verdict and the ranked chunks, dropped ones
+ * included: the same object the tool returns as its raw result, so the
+ * trace, the tool and an eval assertion read one shape.
+ */
+export type RetrievalPayload = {
+  query: string;
+  scope: RetrievalScope;
+  config: RetrievalServiceConfig;
+  verdict?: RetrievalVerdict;
+  chunks?: RetrievedChunk[];
+};
+
+export type EndRetrievalPayload = Required<Pick<RetrievalPayload, 'verdict' | 'chunks'>>;
+
+export type StartRetrievalPayload = Omit<RetrievalPayload, keyof EndRetrievalPayload>;
+
+/**
  * Compile-time guard: a kind payload must not reuse a SpanPayloadBase field
  * name (or `kind`). A collision would make that SpanPayload union member
  * uninhabited, with TS reporting the error far away on `kind`; this
@@ -137,7 +159,8 @@ export type SpanKindPayload =
   | ({ kind: 'model_call' } & DisjointFromBase<ModelCallPayload>)
   | ({ kind: 'tool_execution' } & DisjointFromBase<ToolExecutionPayload>)
   | ({ kind: 'turn' } & DisjointFromBase<TurnPayload>)
-  | ({ kind: 'policy_decision' } & DisjointFromBase<PolicyDecisionPayload>);
+  | ({ kind: 'policy_decision' } & DisjointFromBase<PolicyDecisionPayload>)
+  | ({ kind: 'retrieval' } & DisjointFromBase<RetrievalPayload>);
 
 export type SpanKind = SpanKindPayload['kind'];
 
@@ -158,6 +181,7 @@ export type ModelCallSpanPayload = Extract<SpanPayload, { kind: 'model_call' }>;
 export type ToolExecutionSpanPayload = Extract<SpanPayload, { kind: 'tool_execution' }>;
 export type TurnSpanPayload = Extract<SpanPayload, { kind: 'turn' }>;
 export type PolicyDecisionSpanPayload = Extract<SpanPayload, { kind: 'policy_decision' }>;
+export type RetrievalSpanPayload = Extract<SpanPayload, { kind: 'retrieval' }>;
 
 // --- Trace payloads ---------------------------------------------------------
 

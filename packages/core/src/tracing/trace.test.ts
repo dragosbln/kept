@@ -8,7 +8,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Trace } from './trace.js';
 import { mapTraceToOTLPEnvelope } from './export/otlp.js';
-import type { StartModelCallPayload, TraceConfig } from './types.js';
+import type { StartModelCallPayload, StartRetrievalPayload, TraceConfig } from './types.js';
+import type { RetrievedChunk } from '../retrieval/types.js';
 import type { OtlpSpan } from './export/otlp.js';
 import { customerKeyFor } from '../refund-ledger/customer-key.js';
 import type { DecisionRecord, PolicyRequest } from '../policy/types.js';
@@ -454,5 +455,112 @@ describe('OTLP mapper', () => {
         expect(scalars.some((v) => v !== undefined)).toBe(true);
       }
     }
+  });
+});
+
+// --- retrieval spans ----------------------------------------------------------
+
+const retrievedChunk: RetrievedChunk = {
+  id: 'LH-RET@1.2#§6',
+  docId: 'LH-RET',
+  docTitle: 'Loomhaven Apparel Co. — Return & Refund Policy',
+  sectionRef: '§6',
+  tier: 'binding',
+  version: '1.2',
+  effectiveFrom: Date.UTC(2026, 2, 1),
+  effectiveTo: null,
+  text: '§6 Return shipping, fees, and promotional adjustments …',
+  distance: 0.18,
+  dropped: false,
+};
+
+const retrievalStart: StartRetrievalPayload = {
+  query: 'is return shipping free',
+  scope: { storeId: 'loomhaven', asOf: Date.UTC(2026, 8, 21) },
+  config: { topKBinding: 5, topKInformational: 3, maxDistance: 0.5 },
+};
+
+function recordOneRetrieval(): Trace {
+  const trace = new Trace(traceConfig);
+  const turn = trace.startTurnSpan(null, { customerInput: 'Is return shipping free?' });
+  const tool = trace.startToolExecutionSpan(turn.id, {
+    callId: 'call_search',
+    toolName: 'search_policy',
+    args: { question: 'is return shipping free' },
+  });
+  const retrieval = trace.startRetrievalSpan(tool.id, retrievalStart);
+  retrieval.end({ verdict: 'grounded', chunks: [retrievedChunk] });
+  tool.end({ resultState: 'ok', result: { verdict: 'grounded', chunks: [retrievedChunk] } });
+  turn.end({ outcome: { type: 'reply', message: 'A $6.50 fee is deducted.' } });
+  return trace;
+}
+
+const attributeOf = (
+  span: OtlpSpan,
+  key: string,
+): OtlpSpan['attributes'][number]['value'] | undefined =>
+  span.attributes.find((attribute) => attribute.key === key)?.value;
+
+describe('retrieval spans', () => {
+  it('records the consultation under the tool span, start fields beside the end fields', () => {
+    const completed = recordOneRetrieval().end();
+    expect(completed.spans.map((s) => s.kind)).toEqual(['turn', 'tool_execution', 'retrieval']);
+    const tool = completed.spans[1]!;
+    expect(completed.spans[2]).toMatchObject({
+      kind: 'retrieval',
+      parentId: tool.id,
+      status: 'completed',
+      ...retrievalStart,
+      verdict: 'grounded',
+      chunks: [retrievedChunk],
+    });
+  });
+
+  it('a retrieval that errors keeps its query, scope and config', () => {
+    const trace = new Trace(traceConfig);
+    const turn = trace.startTurnSpan(null, { customerInput: 'fees?' });
+    const retrieval = trace.startRetrievalSpan(turn.id, retrievalStart);
+    retrieval.error('embedding_failed');
+    turn.end({ outcome: { type: 'failed', reason: 'internal' } });
+    const span = trace.end().spans[1];
+    expect(span).toMatchObject({
+      kind: 'retrieval',
+      status: 'error',
+      errorType: 'embedding_failed',
+      ...retrievalStart,
+    });
+    expect(span).not.toHaveProperty('verdict');
+  });
+
+  it('emits the retrieval as kept.* attributes and Langfuse panes, typed retriever, under the tool span', () => {
+    const mapped = mapTraceToOTLPEnvelope(recordOneRetrieval().end()).resourceSpans[0]!
+      .scopeSpans[0]!.spans;
+    const tool = mapped.find((s) => s.name === 'tool_execution')!;
+    const retrieval = mapped.find((s) => s.name === 'retrieval')!;
+
+    expect(retrieval.parentSpanId).toBe(tool.spanId);
+    expect(attributeOf(retrieval, 'langfuse.observation.type')?.stringValue).toBe('retriever');
+    expect(attributeOf(retrieval, 'kept.retrieval.verdict')?.stringValue).toBe('grounded');
+    expect(attributeOf(retrieval, 'kept.retrieval.store_id')?.stringValue).toBe('loomhaven');
+    expect(attributeOf(retrieval, 'kept.retrieval.as_of')?.intValue).toBe(Date.UTC(2026, 8, 21));
+    expect(attributeOf(retrieval, 'kept.retrieval.query')?.stringValue).toBe(
+      'is return shipping free',
+    );
+    expect(JSON.parse(attributeOf(retrieval, 'kept.retrieval.chunks')?.stringValue ?? '')).toEqual([
+      retrievedChunk,
+    ]);
+    expect(
+      JSON.parse(attributeOf(retrieval, 'langfuse.observation.input')?.stringValue ?? ''),
+    ).toEqual(retrievalStart);
+    expect(
+      JSON.parse(attributeOf(retrieval, 'langfuse.observation.output')?.stringValue ?? ''),
+    ).toEqual({
+      verdict: 'grounded',
+      chunks: [retrievedChunk],
+    });
+    expect(attributeOf(retrieval, 'langfuse.observation.metadata.outcomeType')?.stringValue).toBe(
+      'grounded',
+    );
+    expect(attributeOf(retrieval, 'gen_ai.operation.name')).toBeUndefined();
   });
 });

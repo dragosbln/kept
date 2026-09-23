@@ -9,6 +9,10 @@ import type {
   ModelCallSpanPayload,
   PolicyDecisionPayload,
   PolicyDecisionSpanPayload,
+  EndRetrievalPayload,
+  RetrievalPayload,
+  RetrievalSpanPayload,
+  StartRetrievalPayload,
   SettledSpanStatus,
   SpanPayload,
   SpanPayloadBase,
@@ -185,5 +189,26 @@ export class PolicyDecisionSpan extends SpanBase<
   }
 }
 
+/**
+ * A tool's consultation of the knowledge base: opened before the question
+ * is embedded, ended with the verdict and the ranked chunks. error() is for
+ * a retrieval that produced no result at all (embedding or repository
+ * failure); a `no_match` verdict is a result and ends the span normally.
+ */
+export class RetrievalSpan extends SpanBase<
+  RetrievalPayload,
+  StartRetrievalPayload,
+  EndRetrievalPayload
+> {
+  snapshot(): RetrievalSpanPayload {
+    return {
+      kind: 'retrieval',
+      ...this.basePayload,
+      ...this.payload,
+    };
+  }
+}
+
 /** Any span handle a Trace can hold — the closed set matching SpanKindPayload. */
-export type AnySpan = ModelCallSpan | ToolExecutionSpan | TurnSpan | PolicyDecisionSpan;
+export type AnySpan =
+  ModelCallSpan | ToolExecutionSpan | TurnSpan | PolicyDecisionSpan | RetrievalSpan;

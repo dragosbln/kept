@@ -47,10 +47,11 @@ export const langfuseAttributes = {
 } as const;
 
 /**
- * Kept's own namespace, for what no convention covers: the policy decision.
- * Portable to any OTLP consumer. Langfuse folds attributes it does not know
- * into observation metadata, so these render there without a langfuse.*
- * twin; only the input/output panes and the outcome metadata need one.
+ * Kept's own namespace, for what no convention covers: the policy decision
+ * and the retrieval. Portable to any OTLP consumer. Langfuse folds
+ * attributes it does not know into observation metadata, so these render
+ * there without a langfuse.* twin; only the input/output panes and the
+ * outcome metadata need one.
  */
 export const keptAttributes = {
   policyAction: 'kept.policy.action',
@@ -59,4 +60,10 @@ export const keptAttributes = {
   policyConfigHash: 'kept.policy.config_hash',
   policyRequest: 'kept.policy.request',
   policyDecision: 'kept.policy.decision',
+  retrievalVerdict: 'kept.retrieval.verdict',
+  retrievalStoreId: 'kept.retrieval.store_id',
+  retrievalAsOf: 'kept.retrieval.as_of',
+  retrievalQuery: 'kept.retrieval.query',
+  retrievalConfig: 'kept.retrieval.config',
+  retrievalChunks: 'kept.retrieval.chunks',
 } as const;
