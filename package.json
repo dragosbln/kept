@@ -24,6 +24,7 @@
     "demo:widget": "pnpm --filter @kept-hq/widget demo",
     "demo:scam": "tsx --env-file-if-exists=.env scripts/demo-scam.ts",
     "attack": "tsx --env-file-if-exists=.env scripts/attack.ts",
+    "evals": "tsx --env-file-if-exists=.env scripts/evals.ts",
     "db:migrate": "tsx --env-file-if-exists=.env scripts/db-migrate.ts",
     "db:generate": "pnpm --filter @kept-hq/core exec drizzle-kit generate",
     "kb:ingest": "tsx --env-file-if-exists=.env scripts/kb-ingest.ts",
