@@ -1,0 +1,23 @@
+id: retrieval-stale-holiday-window
+title: An expired holiday addendum is not retrieved in September
+source: EC-14, holiday extended windows that expire
+description: >-
+  LH-HOL-2025 §1 extends the window to January 31, 2026 and stops
+  applying on 2026-02-01. With the conversation clock in September 2026
+  the effective-date filter drops it before ranking; with stale-kb the
+  filter is gone and the addendum comes back as binding text.
+tags: [retrieval]
+storeId: loomhaven
+clock: 2026-09-10T12:00:00Z
+steps:
+  - kind: customer_message
+    message: >-
+      Items ordered between November 1 and December 24 can be returned
+      until January 31, right? My order was placed on December 10 and I
+      would like to return it now.
+assertions:
+  - id: holiday-addendum-not-retrieved
+    kind: retrieved_sections
+    where: { docId: LH-HOL-2025 }
+    count: { eq: 0 }
+    expectRedUnder: [stale-kb]

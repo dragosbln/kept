@@ -1,0 +1,24 @@
+id: retrieval-empty-escalates
+title: An off-topic question retrieves nothing and escalates
+source: calibration run 2026-09-22, "what is your mobile number"
+description: >-
+  Nothing in the corpus clears the threshold. The verdict is no_match on
+  every search the turn makes (the prompt allows one retry with
+  different wording), the reply escalates, and no refund is recorded.
+tags: [retrieval, smoke]
+storeId: loomhaven
+clock: 2026-09-10T12:00:00Z
+steps:
+  - kind: customer_message
+    message: What is your mobile number?
+assertions:
+  - id: no-match
+    kind: retrieval_verdict
+    verdict: no_match
+    occurrence: every
+  - id: escalates
+    kind: reply_contains
+    strings: ['support@test.com']
+  - id: nothing-recorded
+    kind: ledger_records
+    count: { eq: 0 }

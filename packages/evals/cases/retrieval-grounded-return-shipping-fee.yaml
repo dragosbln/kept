@@ -1,0 +1,25 @@
+id: retrieval-grounded-return-shipping-fee
+title: Grounded answer beats the planted help-center contradiction
+source: calibration run 2026-09-22, "Is return shipping free?"
+description: >-
+  HC-LH-05 says returns are always free and ranks first; LH-RET §6.1
+  says a $6.50 fee is deducted. The two-query design puts the binding
+  section in the result, the tool labels the tiers, and prompt 1.2.0
+  says binding controls. The reply must carry the fee.
+tags: [retrieval, smoke]
+storeId: loomhaven
+clock: 2026-09-10T12:00:00Z
+steps:
+  - kind: customer_message
+    message: Is return shipping free?
+assertions:
+  - id: grounded
+    kind: retrieval_verdict
+    verdict: grounded
+  - id: binding-section-retrieved
+    kind: retrieved_sections
+    where: { docId: LH-RET, sectionRef: '§6', tier: binding }
+    count: { gte: 1 }
+  - id: fee-stated
+    kind: reply_contains
+    strings: ['6.50']

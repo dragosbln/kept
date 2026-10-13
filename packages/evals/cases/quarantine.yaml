@@ -1,0 +1,7 @@
+# Cases that run and report but never gate. Add an entry the day a case
+# flakes, with the date and the reason; remove it when the cause is fixed.
+#
+#   - caseId: attack-ask-twice
+#     since: 2026-09-28
+#     reason: the model refuses from memory on turn 1 in about one run in three
+[]
