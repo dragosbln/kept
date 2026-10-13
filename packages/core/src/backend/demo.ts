@@ -27,10 +27,13 @@ export class DemoBackend implements OrderBackend {
   private orders: Order[];
   private refundedItems: RefundedItems;
   private requests = new Map<string, RememberedRequest>();
+  private now: () => number;
 
-  constructor(orders: Order[], refundedItems?: RefundedItems) {
+  /** `now` stamps remembered requests; injectable so the eval runner's case clock is the only clock in a run. */
+  constructor(orders: Order[], refundedItems?: RefundedItems, now: () => number = Date.now) {
     this.orders = orders;
     this.refundedItems = refundedItems || {};
+    this.now = now;
   }
 
   async findOrder(orderId: string): Promise<Order | null> {
@@ -54,7 +57,7 @@ export class DemoBackend implements OrderBackend {
     const output = this.refund(params);
     this.requests.set(key, {
       type: 'issue_refund',
-      createdAt: Date.now(),
+      createdAt: this.now(),
       input: { ...params },
       output,
     });

@@ -109,6 +109,12 @@ export type AgentServiceConfig = {
   databaseUrl?: string;
   /** The embedding client for policy search; OpenAI whichever provider answers the customer. */
   embedding?: { apiKey: string; model: string };
+  /**
+   * The fault toggles this process runs under, stamped on every trace. The
+   * eval runner sets them per suite; block 4 reads them from the environment
+   * and makes them do something. Absent means none.
+   */
+  faultToggles?: readonly string[];
 };
 
 /**
@@ -279,11 +285,11 @@ export function configFromEnv(env: NodeJS.ProcessEnv): AgentServiceConfig {
   };
 }
 
-function getBackend(backendKind: BackendKind): OrderBackend {
+function getBackend(backendKind: BackendKind, now: () => number): OrderBackend {
   switch (backendKind) {
     case 'demo':
       // Seed relative to boot time so order ages read naturally in the widget.
-      return new DemoBackend(makeDemoOrders(Date.now()));
+      return new DemoBackend(makeDemoOrders(now()), undefined, now);
     case 'medusa':
       throw new Error('Medusa backend arrives in week 3');
   }
@@ -422,6 +428,13 @@ export type AgentServiceDeps = {
   exporter?: TraceExporter;
   /** Tests inject a service over fakes; production builds one over Postgres and OpenAI. */
   retrieval?: RetrievalService;
+  /**
+   * The conversation clock. Read for every `asOf`, the demo seed's ages, the
+   * ledger's createdAt, the engine's window floors and the inbox's marks, so
+   * the eval runner's case clock reaches every reader from one place.
+   * Production leaves the wall clock.
+   */
+  now?: () => number;
 };
 
 export async function createAgentService(
@@ -432,15 +445,16 @@ export async function createAgentService(
     'main-agent',
     config.promptVersion,
   );
-  const backend = deps.backend ?? getBackend(config.backendKind);
+  const now = deps.now ?? Date.now;
+  const backend = deps.backend ?? getBackend(config.backendKind, now);
   // One ledger per process, shared by every conversation: per-customer and
   // per-day caps, and the cross-conversation attacks, all depend on that.
-  const ledger = deps.ledger ?? new InMemoryRefundLedger();
+  const ledger = deps.ledger ?? new InMemoryRefundLedger(undefined, now);
   // One config per process, from the caps file when KEPT_POLICY_CONFIG names
   // one and the built-in defaults otherwise; validated at boot, its hash
   // stamped on every trace and every decision.
   const policyEngine =
-    deps.policyEngine ?? new PolicyEngine(config.policy?.config ?? DEFAULT_POLICY_CONFIG);
+    deps.policyEngine ?? new PolicyEngine(config.policy?.config ?? DEFAULT_POLICY_CONFIG, { now });
   const retrieval: RetrievalHandle = deps.retrieval
     ? { service: deps.retrieval, close: async () => {} }
     : await buildRetrieval(config);
@@ -448,7 +462,7 @@ export async function createAgentService(
   const modelClient = buildModelClient(config, promptData, registry);
   const store = deps.store ?? new InMemoryConversationStore();
   const auditLog = deps.auditLog ?? new InMemoryAuditLog();
-  const inbox = new InboxService({ ledger, backend, store, audit: auditLog });
+  const inbox = new InboxService({ ledger, backend, store, audit: auditLog, now });
   const locks = new ConversationLocks();
 
   const exporter: TraceExporter | undefined =
@@ -485,6 +499,7 @@ export async function createAgentService(
         promptHash: promptData.hash,
         policyConfigHash: policyEngine.configHash,
         backendKind: config.backendKind,
+        faultToggles: [...(config.faultToggles ?? [])],
       });
 
       // Taken over: the customer's message is kept for the human, the
@@ -510,10 +525,10 @@ export async function createAgentService(
           modelClient,
           tools: registry,
           conversationId: conversation.id,
-          // One store per deployment in v0; the clock is the wall clock here
-          // and the case's clock in the eval runner.
+          // One store per deployment in v0; the clock is the wall clock in
+          // production and the case's clock under the eval runner (deps.now).
           storeId: config.storeId,
-          asOf: Date.now(),
+          asOf: now(),
           trace,
         });
 
