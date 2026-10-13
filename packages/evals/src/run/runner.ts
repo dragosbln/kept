@@ -9,10 +9,11 @@
 // by verdictFor, and the quarantine list applied in runSuite.
 
 import type { RefundLedgerRecord, RefundLedgerRecordStatus } from '@kept-hq/core';
-import type { EvalCase, QuarantineEntry, RefundSelector } from '../case/schema.js';
-import { notImplemented } from './errors.js';
+import type { EvalCase, QuarantineEntry, RefundSelector, Step } from '../case/schema.js';
+import { RunFailure } from './errors.js';
 import type {
   AgentFactory,
+  AssertionOutcome,
   CaseOutcome,
   CaseVerdict,
   Observation,
@@ -23,6 +24,90 @@ import type {
   RunWorld,
   SuiteReport,
 } from './types.js';
+import { createRunClock } from './clock.js';
+import { materializeFixtures, type MaterializedFixtures } from './fixtures.js';
+import { evaluateAssertion } from '../assertions/registry.js';
+
+async function runStep(
+  step: Step,
+  world: RunWorld,
+  handle: RunHandle,
+  transcript: RunTranscript,
+): Promise<void> {
+  const kind = step.kind;
+  switch (kind) {
+    case 'jump_clock': {
+      world.clock.advance(step.byMs);
+      return;
+    }
+    case 'customer_message': {
+      const conversationId = transcript.conversationIds[step.conversation - 1];
+      const result = await handle.agent.handleNewMessage(step.message, conversationId);
+      if (result.kind === 'conversation_not_found') {
+        throw new RunFailure('unexpected', `Conversation id not found: ${conversationId}`);
+      }
+      if (result.outcome.type === 'failed' && result.outcome.reason === 'internal') {
+        throw new RunFailure('turn_internal', 'handle message failed with internal reason');
+      }
+      const trace = handle.traces.at(-1);
+      if (!trace) {
+        throw new RunFailure('unexpected', 'Empty handle.traces');
+      }
+      transcript.timeline.push(trace);
+      if (!conversationId) {
+        transcript.conversationIds.push(result.conversationId);
+        transcript.traces.push([trace]);
+      } else {
+        transcript.traces[step.conversation - 1]!.push(trace);
+      }
+      return;
+    }
+    case 'human_takeover': {
+      const conversationId = transcript.conversationIds[step.conversation - 1];
+      if (!conversationId) {
+        throw new RunFailure('unexpected', `Conversation #${step.conversation} not found.`);
+      }
+      const result = await handle.agent.inbox.takeOver(conversationId, step.actor);
+      if (result.status === 'refused') {
+        throw new RunFailure('step_refused', `Take over refused: ${result.reason}`);
+      }
+      transcript.takeOvers.push({
+        conversation: step.conversation,
+        at: world.clock.now(),
+      });
+      return;
+    }
+    case 'approve_refund': {
+      const record = await resolveRefund(await handle.ledger.list(), step.refund, ['pending']);
+      const result = await handle.agent.inbox.approve(record.id, step.actor);
+      if (result.status === 'refused') {
+        throw new RunFailure('step_refused', `Approve refund refused: ${result.reason}`);
+      }
+      return;
+    }
+    case 'deny_refund': {
+      const record = await resolveRefund(await handle.ledger.list(), step.refund, ['pending']);
+      const result = await handle.agent.inbox.deny(record.id, step.actor);
+      if (result.status === 'refused') {
+        throw new RunFailure('step_refused', `Deny refund refused: ${result.reason}`);
+      }
+      return;
+    }
+    case 'reconcile_refund': {
+      const record = await resolveRefund(await handle.ledger.list(), step.refund, ['pending']);
+      // in a run no tool call is in flight when an operator step executes, every turn has settled, so a zero window is the truthful value
+      const RECONCILE_WINDOW = 0;
+      const result = await handle.agent.inbox.reconcile(record.id, step.actor, RECONCILE_WINDOW);
+      if (result.status === 'refused') {
+        throw new RunFailure('step_refused', `Reconcile refund refused: ${result.reason}`);
+      }
+      return;
+    }
+    default:
+      kind satisfies never;
+      throw new RunFailure('unexpected', `Unrecognized step kind: ${kind}`);
+  }
+}
 
 /**
  * One execution of one case in a fresh world: materialize the fixtures,
@@ -39,7 +124,86 @@ export async function runOnce(
   factory: AgentFactory,
   config: RunSuiteConfig,
 ): Promise<RunOutcome> {
-  return notImplemented(`runOnce(${evalCase.id}, ${factory.name || 'factory'}, ${config.runs})`);
+  const clock = createRunClock(Date.now());
+
+  let fixtures: MaterializedFixtures;
+
+  try {
+    fixtures = materializeFixtures(evalCase, clock.now());
+  } catch (error) {
+    return {
+      status: 'error',
+      error: new RunFailure('boot_failed', 'materializeFixtures failed', {
+        cause: error,
+      }).toRunError(),
+      traceIds: [],
+    };
+  }
+
+  const { orders, refundedItems, priorRefunds } = fixtures;
+
+  const world: RunWorld = {
+    evalCase,
+    clock,
+    orders,
+    refundedItems,
+    priorRefunds,
+    policy: evalCase.fixtures.policy,
+    backend: evalCase.fixtures.backend,
+    faultToggles: config.faultToggles,
+  };
+
+  let handle: RunHandle;
+
+  try {
+    handle = await factory(world);
+  } catch (error) {
+    return {
+      status: 'error',
+      error: new RunFailure('boot_failed', 'handle factory failed', { cause: error }).toRunError(),
+      traceIds: [],
+    };
+  }
+
+  const mutableTranscript: RunTranscript = {
+    conversationIds: [],
+    traces: [],
+    timeline: [],
+    takeOvers: [],
+  };
+
+  let step: Step;
+  for (step of evalCase.steps) {
+    try {
+      await runStep(step, world, handle, mutableTranscript);
+    } catch (error) {
+      const runFailure =
+        error instanceof RunFailure
+          ? error
+          : new RunFailure('unexpected', `Run step failed at: ${step.kind}`, { cause: error });
+      return {
+        status: 'error',
+        error: runFailure.toRunError(),
+        traceIds: mutableTranscript.timeline.map((trace) => trace.id),
+      };
+    }
+  }
+
+  const observation = await buildObservation(world, handle, mutableTranscript);
+
+  const assertionOutcomes: AssertionOutcome[] = evalCase.assertions
+    .map((assertion) => evaluateAssertion(observation, assertion))
+    .map((result, index) => ({
+      id: evalCase.assertions[index]!.id,
+      kind: evalCase.assertions[index]!.kind,
+      result,
+    }));
+
+  return {
+    status: assertionOutcomes.some((ass) => !ass.result.passed) ? 'failed' : 'passed',
+    assertions: assertionOutcomes,
+    traceIds: mutableTranscript.timeline.map((trace) => trace.id),
+  };
 }
 
 /**
@@ -52,9 +216,23 @@ export function resolveRefund(
   selector: RefundSelector,
   statuses: readonly RefundLedgerRecordStatus[],
 ): RefundLedgerRecord {
-  return notImplemented(
-    `resolveRefund(${records.length}, ${selector.orderId}, ${statuses.length})`,
+  const filteredRecords = records.filter(
+    (rec) =>
+      rec.orderId === selector.orderId &&
+      statuses.includes(rec.status) &&
+      (!selector.orderItemId || selector.orderItemId === rec.orderItemId) &&
+      (!selector.quantity || selector.quantity === rec.quantity),
   );
+  if (filteredRecords.length > 1) {
+    throw new RunFailure(
+      'selector_unresolved',
+      `Multiple records were found for the selector: ${filteredRecords.length}`,
+    );
+  }
+  if (!filteredRecords[0]) {
+    throw new RunFailure('selector_unresolved', 'Ledger record not found');
+  }
+  return filteredRecords[0];
 }
 
 /** The snapshot every assertion reads: the ledger listed once, the transcript, the world's facts, the clock at the end. */
@@ -63,9 +241,19 @@ export async function buildObservation(
   handle: RunHandle,
   transcript: RunTranscript,
 ): Promise<Observation> {
-  return notImplemented(
-    `buildObservation(${world.evalCase.id}, ${handle.traces.length}, ${transcript.timeline.length})`,
-  );
+  const records = await handle.ledger.list();
+  return {
+    ledger: records,
+    traces: transcript.traces,
+    timeline: transcript.timeline,
+    conversationIds: transcript.conversationIds,
+    takeOvers: transcript.takeOvers,
+    orders: world.orders,
+    declaredPolicy: world.policy,
+    effectivePolicy: handle.effectivePolicy,
+    clockAtEnd: world.clock.now(),
+    faultToggles: world.faultToggles,
+  };
 }
 
 /**
@@ -74,7 +262,10 @@ export async function buildObservation(
  * case as error.
  */
 export function verdictFor(runs: readonly RunOutcome[]): CaseVerdict {
-  return notImplemented(`verdictFor(${runs.length})`);
+  if (runs.some((run) => run.status === 'error')) return 'error';
+  if (runs.every((run) => run.status === 'passed')) return 'passed';
+  if (runs.every((run) => run.status === 'failed')) return 'failed';
+  return 'flaky';
 }
 
 /** `config.runs` executions of runOnce, folded by verdictFor. */
@@ -82,8 +273,27 @@ export async function runCase(
   evalCase: EvalCase,
   factory: AgentFactory,
   config: RunSuiteConfig,
-): Promise<CaseOutcome> {
-  return notImplemented(`runCase(${evalCase.id}, ${factory.name || 'factory'}, ${config.runs})`);
+): Promise<Omit<CaseOutcome, 'quarantined'>> {
+  const runs: RunOutcome[] = [];
+
+  for (let i = 0; i < config.runs; i++) {
+    const runOutcome = await runOnce(evalCase, factory, config);
+    runs.push(runOutcome);
+    if (runOutcome.status === 'error') {
+      // short-circuit, any errored run breaks the whole case
+      return {
+        caseId: evalCase.id,
+        runs,
+        verdict: verdictFor(runs),
+      };
+    }
+  }
+
+  return {
+    caseId: evalCase.id,
+    runs,
+    verdict: verdictFor(runs),
+  };
 }
 
 /**
@@ -97,7 +307,23 @@ export async function runSuite(
   factory: AgentFactory,
   config: RunSuiteConfig,
 ): Promise<SuiteReport> {
-  return notImplemented(
-    `runSuite(${cases.length}, ${quarantine.length}, ${factory.name || 'factory'}, ${config.runs})`,
-  );
+  const caseOutcomes: CaseOutcome[] = [];
+  const startedAt = Date.now();
+
+  for (const c of cases) {
+    const outcome = await runCase(c, factory, config);
+    caseOutcomes.push({
+      caseId: outcome.caseId,
+      runs: outcome.runs,
+      verdict: outcome.verdict,
+      quarantined: quarantine.some((entry) => entry.caseId === outcome.caseId),
+    });
+  }
+
+  return {
+    startedAt,
+    finishedAt: Date.now(),
+    config,
+    cases: caseOutcomes,
+  };
 }
