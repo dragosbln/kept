@@ -3,20 +3,220 @@
 // runner. A fake factory over an in-memory agent is the intended harness:
 // no model, no Postgres, the trace and the ledger scripted per test.
 
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { runOnce } from './runner.js';
+import { parseEvalCase } from '../case/schema.js';
+import {
+  DemoBackend,
+  InboxService,
+  InMemoryAuditLog,
+  InMemoryConversationStore,
+  InMemoryRefundLedger,
+  Trace,
+  type CompletedTrace,
+  type TurnOutcome,
+} from '@kept-hq/core';
+import type { AgentFactory, EvalAgent, RunHandle, RunWorld } from './types.js';
+import { materializeFixtures } from './fixtures.js';
+
+// const NOW = Date.UTC(2026, 8, 10, 12);
+const DAY = 86_400_000;
+
+const base = {
+  id: 'fixtures',
+  title: 'Fixtures',
+  storeId: 'loomhaven',
+  clock: '2026-09-10T12:00:00Z',
+  steps: [{ kind: 'customer_message', message: 'hi' }],
+  assertions: [{ kind: 'turn_outcome', expected: { type: 'reply' } }],
+};
+
+type FactorySink = {
+  world: RunWorld;
+  handle: RunHandle;
+};
+
+function fakeFactory(
+  script: (message: string) => TurnOutcome,
+  sink: FactorySink[] = [],
+): AgentFactory {
+  return async (world) => {
+    const traces: CompletedTrace[] = [];
+    const store = new InMemoryConversationStore();
+    const ledger = new InMemoryRefundLedger([...world.priorRefunds], () => world.clock.now());
+    const backend = new DemoBackend([...world.orders], structuredClone(world.refundedItems), () =>
+      world.clock.now(),
+    );
+    const inbox = new InboxService({
+      ledger,
+      backend,
+      store,
+      audit: new InMemoryAuditLog(),
+      now: () => world.clock.now(),
+    });
+    const agent: EvalAgent = {
+      inbox,
+      shutdown: async () => {},
+      async handleNewMessage(message, conversationId) {
+        const id = conversationId ?? (await store.createNewConversation()).id;
+        const trace = new Trace({
+          sessionId: id,
+          providerName: 'fake',
+          promptName: 'main-agent',
+          promptVersion: '0',
+          promptHash: 'fake',
+          backendKind: 'demo',
+        });
+        const turn = trace.startTurnSpan(null, { customerInput: message });
+        const outcome = script(message);
+        turn.end({ outcome });
+        traces.push(trace.end()); // before resolving, as the host does
+        return { kind: 'ok', conversationId: id, outcome };
+      },
+    };
+    const handle = { agent, traces, ledger, effectivePolicy: world.policy };
+    sink.push({
+      world,
+      handle,
+    });
+    return handle;
+  };
+}
 
 describe('runOnce', () => {
-  it.todo(
-    'builds a fresh world per run: the factory is called once, with the materialized fixtures and a clock at the case clock',
-  );
-  it.todo(
-    'maps each customer turn to the trace exported during that call, by conversation ordinal and turn',
-  );
+  it('builds a fresh world per run: the factory is called once, with the materialized fixtures and a clock at the case clock', async () => {
+    const sink: FactorySink[] = [];
+    const evalCase = parseEvalCase(base);
+    await runOnce(
+      evalCase,
+      fakeFactory((_message) => ({ type: 'reply', message: 'success' }), sink),
+      {
+        faultToggles: [],
+        runs: 1,
+      },
+    );
+
+    expect(sink.length).toEqual(1);
+    expect(sink[0]!.world.clock.now()).toBe(evalCase.clock);
+
+    const materialized = materializeFixtures(evalCase, evalCase.clock);
+
+    expect(sink[0]!.world.orders).toEqual(materialized.orders);
+    expect(sink[0]!.world.refundedItems).toEqual(materialized.refundedItems);
+    expect(sink[0]!.world.priorRefunds).toEqual(materialized.priorRefunds);
+  });
+  it('maps each customer turn to the trace exported during that call, by conversation ordinal and turn', async () => {
+    const CONVERSATION_1 = 'hi from conversation_1';
+    const CONVERSATION_2 = 'hi from conversation_2';
+
+    const evalCase = parseEvalCase({
+      ...base,
+      steps: [
+        { kind: 'customer_message', message: CONVERSATION_1 },
+        { kind: 'customer_message', message: CONVERSATION_2, conversation: 2 },
+      ],
+      assertions: [
+        {
+          kind: 'reply_contains',
+          strings: [CONVERSATION_2],
+          mode: 'all',
+          at: { conversation: 2, turn: 1 },
+        },
+      ],
+    });
+    const result = await runOnce(
+      evalCase,
+      fakeFactory((message) => ({ type: 'reply', message: `echo: ${message}` })),
+      {
+        faultToggles: [],
+        runs: 1,
+      },
+    );
+
+    expect(result.status).toEqual('passed');
+  });
   it.todo('opens a conversation the first time its ordinal appears and continues it afterwards');
   it.todo('jump_clock advances the clock the factory received and nothing else');
-  it.todo(
-    'an operator step resolves its selector against the live ledger and calls the inbox with the actor',
-  );
+  it('an operator step resolves its selector against the live ledger and calls the inbox with the actor', async () => {
+    const sink: FactorySink[] = [];
+
+    const targetRefund = {
+      orderId: 'order-1005',
+      orderItemId: 'order-1005-line-1',
+      quantity: 1,
+      status: 'pending',
+      ageMs: 5 * DAY,
+    };
+
+    const otherRefund = {
+      orderId: 'order-1002',
+      orderItemId: 'order-1002-line-2',
+      quantity: 1,
+      status: 'pending',
+      ageMs: DAY,
+    };
+
+    const evalCase = parseEvalCase({
+      ...base,
+      fixtures: {
+        priorRefunds: [otherRefund, targetRefund],
+      },
+      steps: [
+        {
+          kind: 'approve_refund',
+          refund: {
+            orderId: targetRefund.orderId,
+            orderItemId: targetRefund.orderItemId,
+            quantity: targetRefund.quantity,
+          },
+          actor: 'test',
+        },
+      ],
+      assertions: [
+        {
+          kind: 'ledger_records',
+          where: {
+            orderId: targetRefund.orderId,
+            orderItemId: targetRefund.orderItemId,
+            quantity: targetRefund.quantity,
+            status: ['ok'],
+          },
+          count: {
+            eq: 1,
+          },
+        },
+        {
+          kind: 'ledger_records',
+          where: {
+            orderId: otherRefund.orderId,
+            orderItemId: otherRefund.orderItemId,
+            quantity: otherRefund.quantity,
+            status: ['pending'],
+          },
+          count: {
+            eq: 1,
+          },
+        },
+      ],
+    });
+
+    const result = await runOnce(
+      evalCase,
+      fakeFactory((_message) => ({ type: 'reply', message: 'success' }), sink),
+      {
+        faultToggles: [],
+        runs: 1,
+      },
+    );
+
+    expect(result.status).toEqual('passed');
+    expect(sink.length).toEqual(1);
+
+    const auditList = await sink[0]!.handle.agent.inbox.listAudit();
+    const approvedAction = auditList.find((adt) => adt.action === 'approve');
+    expect(approvedAction).toBeDefined();
+    expect(approvedAction!.actor).toEqual('test');
+  });
   it.todo(
     'a take-over is recorded with the conversation ordinal, the turns it had so far, and the run clock',
   );
