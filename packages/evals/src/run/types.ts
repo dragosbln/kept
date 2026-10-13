@@ -76,7 +76,13 @@ export type AgentFactory = (world: RunWorld) => Promise<RunHandle>;
 
 // --- What a run watches -----------------------------------------------------
 
-export type TakeOver = { conversation: number; at: number };
+/**
+ * One human_takeover step. `afterTurn` is how many turns the conversation
+ * had at that moment: the marker assertions use, because trace timestamps
+ * are wall clock and the run clock is not. `at` is the run clock, for the
+ * report.
+ */
+export type TakeOver = { conversation: number; afterTurn: number; at: number };
 
 /** What the runner accumulates while stepping; the observation is built from it and the ledger at the end. */
 export type RunTranscript = {

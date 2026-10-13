@@ -8,6 +8,8 @@
 // module adds: assertions over the observation, three repetitions folded
 // by verdictFor, and the quarantine list applied in runSuite.
 
+/* oxlint-disable no-await-in-loop -- steps, runs and cases are sequential by design */
+
 import type { RefundLedgerRecord, RefundLedgerRecordStatus } from '@kept-hq/core';
 import type { EvalCase, QuarantineEntry, RefundSelector, Step } from '../case/schema.js';
 import { RunFailure } from './errors.js';
@@ -42,29 +44,30 @@ async function runStep(
     }
     case 'customer_message': {
       const conversationId = transcript.conversationIds[step.conversation - 1];
+      const initialSinkCount = handle.traces.length;
       const result = await handle.agent.handleNewMessage(step.message, conversationId);
       if (result.kind === 'conversation_not_found') {
         throw new RunFailure('unexpected', `Conversation id not found: ${conversationId}`);
       }
-      if (result.outcome.type === 'failed' && result.outcome.reason === 'internal') {
-        throw new RunFailure('turn_internal', 'handle message failed with internal reason');
+      if (handle.traces.length <= initialSinkCount) {
+        throw new RunFailure('unexpected', 'Trace was not added to the handle after the run');
       }
-      const trace = handle.traces.at(-1);
-      if (!trace) {
-        throw new RunFailure('unexpected', 'Empty handle.traces');
-      }
+      const trace = handle.traces.at(-1)!;
       transcript.timeline.push(trace);
-      if (!conversationId) {
+      if (conversationId === undefined) {
         transcript.conversationIds.push(result.conversationId);
         transcript.traces.push([trace]);
       } else {
         transcript.traces[step.conversation - 1]!.push(trace);
       }
+      if (result.outcome.type === 'failed' && result.outcome.reason === 'internal') {
+        throw new RunFailure('turn_internal', 'handle message failed with internal reason');
+      }
       return;
     }
     case 'human_takeover': {
       const conversationId = transcript.conversationIds[step.conversation - 1];
-      if (!conversationId) {
+      if (conversationId === undefined) {
         throw new RunFailure('unexpected', `Conversation #${step.conversation} not found.`);
       }
       const result = await handle.agent.inbox.takeOver(conversationId, step.actor);
@@ -74,6 +77,7 @@ async function runStep(
       transcript.takeOvers.push({
         conversation: step.conversation,
         at: world.clock.now(),
+        afterTurn: transcript.traces[step.conversation - 1]?.length ?? 0,
       });
       return;
     }
@@ -81,6 +85,8 @@ async function runStep(
       const record = await resolveRefund(await handle.ledger.list(), step.refund, ['pending']);
       const result = await handle.agent.inbox.approve(record.id, step.actor);
       if (result.status === 'refused') {
+        console.warn('YO PROBLEM!!', result);
+
         throw new RunFailure('step_refused', `Approve refund refused: ${result.reason}`);
       }
       return;
@@ -94,7 +100,10 @@ async function runStep(
       return;
     }
     case 'reconcile_refund': {
-      const record = await resolveRefund(await handle.ledger.list(), step.refund, ['pending']);
+      const record = await resolveRefund(await handle.ledger.list(), step.refund, [
+        'unknown',
+        'attempted',
+      ]);
       // in a run no tool call is in flight when an operator step executes, every turn has settled, so a zero window is the truthful value
       const RECONCILE_WINDOW = 0;
       const result = await handle.agent.inbox.reconcile(record.id, step.actor, RECONCILE_WINDOW);
@@ -124,7 +133,7 @@ export async function runOnce(
   factory: AgentFactory,
   config: RunSuiteConfig,
 ): Promise<RunOutcome> {
-  const clock = createRunClock(Date.now());
+  const clock = createRunClock(evalCase.clock);
 
   let fixtures: MaterializedFixtures;
 
@@ -165,45 +174,71 @@ export async function runOnce(
     };
   }
 
-  const mutableTranscript: RunTranscript = {
-    conversationIds: [],
-    traces: [],
-    timeline: [],
-    takeOvers: [],
-  };
+  try {
+    const mutableTranscript: RunTranscript = {
+      conversationIds: [],
+      traces: [],
+      timeline: [],
+      takeOvers: [],
+    };
 
-  let step: Step;
-  for (step of evalCase.steps) {
+    let step: Step;
+    for (step of evalCase.steps) {
+      try {
+        await runStep(step, world, handle, mutableTranscript);
+      } catch (error) {
+        const runFailure =
+          error instanceof RunFailure
+            ? error
+            : new RunFailure('unexpected', `Run step failed at: ${step.kind}`, { cause: error });
+        return {
+          status: 'error',
+          error: runFailure.toRunError(),
+          traceIds: mutableTranscript.timeline.map((trace) => trace.id),
+        };
+      }
+    }
+
     try {
-      await runStep(step, world, handle, mutableTranscript);
+      const observation = await buildObservation(world, handle, mutableTranscript);
+
+      try {
+        const assertionOutcomes: AssertionOutcome[] = evalCase.assertions
+          .map((assertion) => evaluateAssertion(observation, assertion))
+          .map((result, index) => ({
+            id: evalCase.assertions[index]!.id,
+            kind: evalCase.assertions[index]!.kind,
+            result,
+          }));
+
+        return {
+          status: assertionOutcomes.some((assrt) => !assrt.result.passed) ? 'failed' : 'passed',
+          assertions: assertionOutcomes,
+          traceIds: mutableTranscript.timeline.map((trace) => trace.id),
+        };
+      } catch (error) {
+        console.log('err', error);
+
+        return {
+          status: 'error',
+          error: new RunFailure('unexpected', 'Assertion threw an error', {
+            cause: error,
+          }).toRunError(),
+          traceIds: mutableTranscript.timeline.map((trace) => trace.id),
+        };
+      }
     } catch (error) {
-      const runFailure =
-        error instanceof RunFailure
-          ? error
-          : new RunFailure('unexpected', `Run step failed at: ${step.kind}`, { cause: error });
       return {
         status: 'error',
-        error: runFailure.toRunError(),
+        error: new RunFailure('unexpected', 'buildObservation failed', {
+          cause: error,
+        }).toRunError(),
         traceIds: mutableTranscript.timeline.map((trace) => trace.id),
       };
     }
+  } finally {
+    await handle.agent.shutdown();
   }
-
-  const observation = await buildObservation(world, handle, mutableTranscript);
-
-  const assertionOutcomes: AssertionOutcome[] = evalCase.assertions
-    .map((assertion) => evaluateAssertion(observation, assertion))
-    .map((result, index) => ({
-      id: evalCase.assertions[index]!.id,
-      kind: evalCase.assertions[index]!.kind,
-      result,
-    }));
-
-  return {
-    status: assertionOutcomes.some((ass) => !ass.result.passed) ? 'failed' : 'passed',
-    assertions: assertionOutcomes,
-    traceIds: mutableTranscript.timeline.map((trace) => trace.id),
-  };
 }
 
 /**
@@ -221,7 +256,7 @@ export function resolveRefund(
       rec.orderId === selector.orderId &&
       statuses.includes(rec.status) &&
       (!selector.orderItemId || selector.orderItemId === rec.orderItemId) &&
-      (!selector.quantity || selector.quantity === rec.quantity),
+      (selector.quantity === undefined || selector.quantity === rec.quantity),
   );
   if (filteredRecords.length > 1) {
     throw new RunFailure(
@@ -262,6 +297,7 @@ export async function buildObservation(
  * case as error.
  */
 export function verdictFor(runs: readonly RunOutcome[]): CaseVerdict {
+  if (!runs.length) return 'error';
   if (runs.some((run) => run.status === 'error')) return 'error';
   if (runs.every((run) => run.status === 'passed')) return 'passed';
   if (runs.every((run) => run.status === 'failed')) return 'failed';

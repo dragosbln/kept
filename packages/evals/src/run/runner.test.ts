@@ -17,7 +17,9 @@ describe('runOnce', () => {
   it.todo(
     'an operator step resolves its selector against the live ledger and calls the inbox with the actor',
   );
-  it.todo('a take-over is recorded with the conversation ordinal and the clock at that moment');
+  it.todo(
+    'a take-over is recorded with the conversation ordinal, the turns it had so far, and the run clock',
+  );
   it.todo('the observation is taken once after the last step and every assertion runs against it');
   it.todo('a factory throw is an error of kind boot_failed');
   it.todo(
