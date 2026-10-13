@@ -1,5 +1,4 @@
-// HAND-WRITTEN (block 3): every assertion type; the signatures are the
-// skeleton, the bodies land next. Each entry is a pure function from the
+// HAND-WRITTEN (block 3): every assertion type; Each entry is a pure function from the
 // observation and its own parameters to a result with a reason; nothing
 // here awaits, reads a port, or knows about Langfuse (ADR 0001). The registry is keyed by kind, so a case file names a kind
 // and the runner looks it up, the way the retrieval query names its
@@ -16,10 +15,11 @@ import {
   CAP_REGISTRY,
   COUNTING_STATUSES,
   type ToolName,
-  type RetrievalResult,
   type RetrievalVerdict,
   type CompletedTurnSpanPayload,
   type CompletedSpanPayload,
+  type CompletedRetrievalSpanPayload,
+  type CompletedPolicyDecisionSpanPayload,
 } from '@kept-hq/core';
 import type { AssertionKind, AssertionOf, At, CaseAssertion, Count } from '../case/schema.js';
 import type { AssertionResult, Observation } from '../run/types.js';
@@ -34,7 +34,7 @@ export type AssertionRegistry = { readonly [K in AssertionKind]: AssertionFn<K> 
 
 export const ASSERTIONS: AssertionRegistry = {
   tool_call_sequence: (observation, assertion) => {
-    const toolCalls = toolCallsIn(tracesAt(observation, assertion.at ?? { conversation: 1 }));
+    const toolCalls = toolCallsIn(tracesAt(observation, assertion.at));
     let cursor = 0;
     let lastFoundSpanIndex = 0;
     toolCalls.forEach((span, index) => {
@@ -94,12 +94,13 @@ export const ASSERTIONS: AssertionRegistry = {
             (preCall) =>
               preCall.toolName === assertion.mustFollow &&
               (!assertion.sharedArg ||
-                preCall.args[assertion.sharedArg] === writeCall.call.args[assertion.sharedArg]),
+                (writeCall.call.args[assertion.sharedArg] !== undefined &&
+                  preCall.args[assertion.sharedArg] === writeCall.call.args[assertion.sharedArg])),
           );
 
         if (!hit) {
           return fail(
-            `Write call not preceeded by mustFollow call: ${writeCall.call.toolName} requires ${assertion.mustFollow}${assertion.sharedArg ? ` with matching args on ${assertion.sharedArg}` : ''}`,
+            `Write call not preceded by mustFollow call: ${writeCall.call.toolName} requires ${assertion.mustFollow}${assertion.sharedArg ? ` with matching args on ${assertion.sharedArg}` : ''}`,
             writeCall.call,
           );
         }
@@ -123,15 +124,27 @@ export const ASSERTIONS: AssertionRegistry = {
     };
   },
   policy_decision: (observation, assertion) => {
-    const records = matchingRefunds(observation, assertion.refund);
-    const record = assertion.occurrence === 'first' ? records[0] : records[-1];
-    if (!record) {
-      throw new Error('Invalid assertion. Ledger record not found');
+    const spans = policySpansIn(tracesAt(observation)).filter(
+      (span) =>
+        assertion.refund.orderId === span.request.orderId &&
+        (!assertion.refund.orderItemId ||
+          assertion.refund.orderItemId === span.request.orderItemId) &&
+        (!assertion.refund.quantity || assertion.refund.quantity === span.request.quantity),
+    );
+
+    if (spans.length <= 0) {
+      return fail('No matching policy decision spans found');
     }
-    const match = objectsMatch(record.decisionRecord, assertion.expected);
-    if (!match) {
-      return fail(`Decision records not matching expecting values`);
+
+    const spanToTest = assertion.occurrence === 'first' ? spans[0]! : spans.at(-1)!;
+
+    if (!objectsMatch(spanToTest, assertion.expected)) {
+      return fail(
+        `Outcomes don't match. Expected: ${JSON.stringify(assertion.expected)}, got: ${JSON.stringify({ outcome: spanToTest.outcome, reason: spanToTest.reason })}`,
+        spanToTest,
+      );
     }
+
     return {
       passed: true,
     };
@@ -175,19 +188,19 @@ export const ASSERTIONS: AssertionRegistry = {
     );
   },
   retrieval_verdict: (observation, assertion) => {
-    const searchPolicyCalls = toolCallsIn(tracesAt(observation, assertion.at));
-    if (!searchPolicyCalls.length) {
-      return fail(`No search_policy calls found`);
+    const retrievals = retrievalSpansIn(tracesAt(observation, assertion.at));
+    if (retrievals.length <= 0) {
+      return fail(`No search_policy spans found`);
     }
 
     const { occurrence } = assertion;
     if (occurrence === 'every') {
-      const unexpectedVerdicts = searchPolicyCalls.filter(
+      const unexpectedVerdicts = retrievals.filter(
         (call) => !checkRetrievalResult(call, assertion.verdict),
       );
       if (unexpectedVerdicts.length) {
         return fail(
-          `Unexpected retrieval verdicts: ${unexpectedVerdicts.map((verdict) => `callId ${verdict.callId}, verdict ${(verdict.result as RetrievalResult).verdict}`).join(', ')}`,
+          `Unexpected retrieval verdicts: ${unexpectedVerdicts.map((span) => `callId ${span.id}, verdict ${span.verdict}`).join(', ')}`,
         );
       }
       return {
@@ -195,41 +208,38 @@ export const ASSERTIONS: AssertionRegistry = {
       };
     }
 
-    const searchPolicyCall =
-      occurrence === 'first'
-        ? searchPolicyCalls[0]
-        : searchPolicyCalls[searchPolicyCalls.length - 1];
+    const retrieval = occurrence === 'first' ? retrievals[0]! : retrievals.at(-1)!;
 
-    if (!checkRetrievalResult(searchPolicyCall!, assertion.verdict))
+    if (!checkRetrievalResult(retrieval, assertion.verdict))
       return fail(
-        `Unexpected retrieval result. Expected: ${assertion.verdict}, got: ${(searchPolicyCall?.result as RetrievalResult)?.verdict}`,
-        searchPolicyCall,
+        `Unexpected retrieval result. Expected: ${assertion.verdict}, got: ${retrieval.verdict}`,
+        retrieval,
       );
     return {
       passed: true,
     };
   },
   retrieved_sections: (observation, assertion) => {
-    const searchPolicyCalls = toolCallsIn(tracesAt(observation, assertion.at));
-    if (!searchPolicyCalls.length) {
-      return fail(`No search_policy calls found`);
+    const retrievals = retrievalSpansIn(tracesAt(observation, assertion.at));
+    if (!retrievals.length) {
+      return fail(`No search_policy spans found`);
     }
 
-    const matchingRetrievals = searchPolicyCalls.filter((call) => {
-      const result = call.result as RetrievalResult;
-      const { where } = assertion;
-      return result.chunks.some(
+    const { where } = assertion;
+    const matchingChunks = retrievals
+      .flatMap((retr) => retr.chunks || [])
+      .filter(
         (chunk) =>
+          !chunk.dropped &&
           (!where.docId || chunk.docId === where.docId) &&
           (!where.sectionRef || chunk.sectionRef === where.sectionRef) &&
           (!where.tier || chunk.tier === where.tier),
       );
-    });
 
-    if (!compare(matchingRetrievals.length, assertion.count)) {
+    if (!compare(matchingChunks.length, assertion.count)) {
       return fail(
-        `Matching retrieval count not matching assertion. Expected: ${JSON.stringify(assertion.count)}, received: ${matchingRetrievals.length}`,
-        searchPolicyCalls[0],
+        `Matching chunks count not matching assertion. Expected: ${JSON.stringify(assertion.count)}, received: ${matchingChunks.length}`,
+        retrievals[0],
       );
     }
     return {
@@ -246,7 +256,7 @@ export const ASSERTIONS: AssertionRegistry = {
     }
     if (assertion.mode === 'all') {
       const stringsNotInResponse = assertion.strings.filter(
-        (string) => !outcome.message.includes(string),
+        (string) => !outcome.message.toLocaleLowerCase().includes(string.toLocaleLowerCase()),
       );
       if (stringsNotInResponse.length) {
         return fail(
@@ -255,7 +265,11 @@ export const ASSERTIONS: AssertionRegistry = {
         );
       }
     } else if (assertion.mode === 'any') {
-      if (!assertion.strings.some((string) => outcome.message.includes(string))) {
+      if (
+        !assertion.strings.some((string) =>
+          outcome.message.toLocaleLowerCase().includes(string.toLocaleLowerCase()),
+        )
+      ) {
         return fail(`None of the expected strings are present in the response.`, lastTurn);
       }
     } else {
@@ -273,9 +287,11 @@ export const ASSERTIONS: AssertionRegistry = {
     if (outcome.type !== 'reply') {
       return fail(`Outcome is not a reply: ${outcome.type}`);
     }
-    const stringsContained = assertion.strings.filter((string) => outcome.message.includes(string));
+    const stringsContained = assertion.strings.filter((string) =>
+      outcome.message.toLocaleLowerCase().includes(string.toLocaleLowerCase()),
+    );
     if (stringsContained.length) {
-      fail(`Reply contains unexpected strings: ${stringsContained.join(', ')}`);
+      return fail(`Reply contains unexpected strings: ${stringsContained.join(', ')}`);
     }
     return {
       passed: true,
@@ -312,6 +328,20 @@ export const ASSERTIONS: AssertionRegistry = {
   },
 };
 
+function policySpansIn(traces: readonly CompletedTrace[]): CompletedPolicyDecisionSpanPayload[] {
+  return traces
+    .flatMap((trace) => trace.spans)
+    .filter((span) => span.kind === 'policy_decision')
+    .toSorted((a, b) => a.startedAt - b.startedAt);
+}
+
+function retrievalSpansIn(traces: readonly CompletedTrace[]): CompletedRetrievalSpanPayload[] {
+  return traces
+    .flatMap((trace) => trace.spans)
+    .filter((span) => span.kind === 'retrieval')
+    .toSorted((a, b) => a.startedAt - b.startedAt);
+}
+
 function turnSpansIn(traces: readonly CompletedTrace[]): CompletedTurnSpanPayload[] {
   return traces
     .flatMap((trace) => trace.spans)
@@ -320,13 +350,11 @@ function turnSpansIn(traces: readonly CompletedTrace[]): CompletedTurnSpanPayloa
 }
 
 function checkRetrievalResult(
-  span: CompletedToolExecutionSpanPayload,
+  span: CompletedRetrievalSpanPayload,
   expected: RetrievalVerdict,
 ): boolean {
-  const result = span.result as RetrievalResult;
-  if (!result) throw new Error('Empty retrieval result');
-  if (!result.verdict) throw new Error('Retrieval result has no verdict');
-  return result.verdict === expected;
+  if (!span.verdict) throw new Error('Retrieval result has no verdict');
+  return span.verdict === expected;
 }
 
 /** What a record consumes of a cap: the moved amount once known, else the expected one. Mirrors capDecisionFor in core's engine.ts. */
