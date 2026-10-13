@@ -18,7 +18,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "cases"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -27,9 +28,12 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@kept-hq/core": "workspace:*"
+    "@kept-hq/core": "workspace:*",
+    "yaml": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
+    "@types/node": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

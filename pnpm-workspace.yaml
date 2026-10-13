@@ -42,3 +42,6 @@ catalog:
   'drizzle-orm': ^0.45.0
   postgres: ^3.4.0
   'drizzle-kit': ^0.31.0
+  # Eval cases are YAML files (the case format is a product surface); `yaml`
+  # is the parser, dev and runtime both, in @kept-hq/evals only.
+  yaml: ^2.9.0
