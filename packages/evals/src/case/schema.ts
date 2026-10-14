@@ -333,11 +333,13 @@ export const CaseAssertionSchema = z.discriminatedUnion('kind', [
     expected: PolicyDecisionExpectationSchema,
     ...common,
   }),
-  // The counting records in the cap's scope, summed the way the ledger sums
-  // them (COUNTING_STATUSES, one currency, the window ending at the run's
-  // clock), stay within the DECLARED cap of that kind and currency. per_call
-  // checks each record alone; per_order needs orderId; per_customer needs
-  // email; per_day needs neither.
+  // The money the engine let out on its own, in the cap's scope, stays
+  // within the DECLARED cap of that kind and currency: records in attempted,
+  // ok or unknown whose decision was allow, one currency, the window ending
+  // at the run's clock. Pending records are a human's to decide and do not
+  // count, although the ledger reserves them when deciding the next
+  // request. per_call checks each record alone; per_order needs orderId;
+  // per_customer needs email; per_day needs neither.
   z
     .strictObject({
       kind: z.literal('composed_cap_sum'),

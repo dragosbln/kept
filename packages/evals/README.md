@@ -97,11 +97,16 @@ loader refuses the shorthand when a case opens more; the reply, turn
 and retrieval kinds read the last turn of the run, because "the reply"
 means the last one.
 
-`composed_cap_sum` sums the counting records the way the ledger does
-(pending, attempted, ok, unknown; one currency; the window ending at
-the run's clock) and compares against the cap the case **declared**,
-not the one the engine ran with. That is what lets a toggle that
-filters the engine's config turn it red.
+`composed_cap_sum` sums the money the engine let out on its own: records
+in `attempted`, `ok` or `unknown` whose decision was `allow`, in one
+currency, inside the window ending at the run's clock. A pending record
+is a human's to decide and does not count, even though the ledger
+reserves it when deciding the next request: the record the engine
+writes while routing an over-cap request to approval would otherwise
+put the sum over the cap on every correct run. The sum is compared
+against the cap the case **declared**, not the one the engine ran
+with. That is what lets a toggle that filters the engine's config turn
+it red.
 
 `expectRedUnder` lists the fault toggles under which the assertion must
 fail in at least one run; under any other toggle it must pass in every

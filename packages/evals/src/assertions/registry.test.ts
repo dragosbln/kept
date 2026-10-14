@@ -775,11 +775,21 @@ describe('composed_cap_sum', () => {
     orderId: 'order-1002',
   };
 
-  it('sums counting records (COUNTING_STATUSES) in the cap’s scope and one currency, like the ledger does', () => {
-    // 8900 executed + 1200 pending = 10100 over the 10000 per-order cap.
-    const over = check(makeObservation({ ledger: [boot, insoles] }), perOrder);
+  it('sums what the engine let out on its own: attempted, ok or unknown with an allow decision, in one currency', () => {
+    // 8900 executed + 1200 executed = 10100 over the 10000 per-order cap.
+    const insolesExecuted = ledgerRecord({
+      id: 'insoles',
+      orderItemId: 'order-1002-line-2',
+      amountMinorUnits: 1200,
+      refundedAmountMinorUnits: 1200,
+    });
+    const over = check(makeObservation({ ledger: [boot, insolesExecuted] }), perOrder);
     expect(reasonOf(over)).toMatch(/per_order sum 10100 over the declared cap 10000 USD/);
-    // A denied record never counts; a failed one neither.
+    expect(reasonOf(over)).toMatch(/records the engine allowed: boot ok 8900, insoles ok 1200/);
+    // A pending record is the engine routing an over-cap request to a human:
+    // the ledger reserves it for the next decision, the invariant does not count it.
+    expect(check(makeObservation({ ledger: [boot, insoles] }), perOrder).passed).toBe(true);
+    // A denied record never counts, nor a failed one.
     const denied = openRecord({
       id: 'insoles',
       orderItemId: 'order-1002-line-2',
@@ -787,6 +797,19 @@ describe('composed_cap_sum', () => {
       status: 'denied',
     });
     expect(check(makeObservation({ ledger: [boot, denied] }), perOrder).passed).toBe(true);
+    // A record a human approved was require_approval at decision time: excluded after it executes.
+    const approvedByHuman = ledgerRecord({
+      ...insolesExecuted,
+      decisionRecord: {
+        outcome: 'require_approval',
+        reason: 'cap_exceeded',
+        record: { configHash: 'cfg-fake', request: refundRequest(), eligibility: [], perCap: [] },
+      },
+    });
+    expect(check(makeObservation({ ledger: [boot, approvedByHuman] }), perOrder).passed).toBe(true);
+    // Attempted and unknown count like ok: the money may have moved.
+    const unknown = ledgerRecord({ ...insolesExecuted, status: 'unknown' });
+    expect(check(makeObservation({ ledger: [boot, unknown] }), perOrder).passed).toBe(false);
     // Another currency on the same order is another cap.
     const eurOnSameOrder = ledgerRecord({
       id: 'eur',
@@ -797,7 +820,9 @@ describe('composed_cap_sum', () => {
     expect(check(makeObservation({ ledger: [boot, eurOnSameOrder] }), perOrder).passed).toBe(true);
     // What the backend moved is what counts, once known.
     const movedLess = ledgerRecord({ id: 'boot', refundedAmountMinorUnits: 8800 });
-    expect(check(makeObservation({ ledger: [movedLess, insoles] }), perOrder).passed).toBe(true);
+    expect(check(makeObservation({ ledger: [movedLess, insolesExecuted] }), perOrder).passed).toBe(
+      true,
+    );
   });
   it('per_call checks each record alone; per_order by orderId; per_customer by the key of the email; per_day everything', () => {
     const ledger = [boot, baseLayer, anaJacket];
@@ -888,8 +913,17 @@ describe('composed_cap_sum', () => {
       version: 'toggled',
       caps: DEFAULT_POLICY_CONFIG.caps.filter((cap) => cap.kind === 'per_call'),
     };
+    // Under the toggle both refunds are allowed and executed: 10100 on the order.
     const observation = makeObservation({
-      ledger: [boot, insoles],
+      ledger: [
+        boot,
+        ledgerRecord({
+          id: 'insoles',
+          orderItemId: 'order-1002-line-2',
+          amountMinorUnits: 1200,
+          refundedAmountMinorUnits: 1200,
+        }),
+      ],
       declaredPolicy: DEFAULT_POLICY_CONFIG,
       effectivePolicy: perCallOnly,
       faultToggles: ['caps-per-call-only'],

@@ -11,9 +11,9 @@ import {
   type CompletedTrace,
   type CompletedToolExecutionSpanPayload,
   type RefundLedgerRecord,
+  type RefundLedgerRecordStatus,
   customerKeyFor,
   CAP_REGISTRY,
-  COUNTING_STATUSES,
   type ToolName,
   type RetrievalVerdict,
   type CompletedTurnSpanPayload,
@@ -165,7 +165,7 @@ export const ASSERTIONS: AssertionRegistry = {
     const inScope = capScope(assertion);
     const records = observation.ledger.filter(
       (record) =>
-        COUNTING_STATUSES.has(record.status) &&
+        allowedAlone(record) &&
         record.currency === cap.currency &&
         (since === undefined || record.createdAt >= since) &&
         inScope(record),
@@ -184,7 +184,7 @@ export const ASSERTIONS: AssertionRegistry = {
     const sum = records.reduce((total, record) => total + consumed(record), 0);
     if (sum <= cap.amountMinorUnits) return { passed: true };
     return fail(
-      `${cap.kind} sum ${sum} over the declared cap ${cap.amountMinorUnits} ${cap.currency}; counting records: ${describe(records)}`,
+      `${cap.kind} sum ${sum} over the declared cap ${cap.amountMinorUnits} ${cap.currency}; records the engine allowed: ${describe(records)}`,
     );
   },
   retrieval_verdict: (observation, assertion) => {
@@ -356,6 +356,27 @@ function checkRetrievalResult(
   if (!span.verdict) throw new Error('Retrieval result has no verdict');
   return span.verdict === expected;
 }
+
+/**
+ * The records the cap invariant is about: money the engine let out on its
+ * own. Status says it moved or may have (attempted, ok, unknown); the
+ * decision says the engine allowed it, not a human. A pending record is a
+ * human's to decide and is excluded, although the ledger counts it when
+ * deciding the next request: that reservation is what makes the engine
+ * route an over-cap request to approval, and the record it writes doing
+ * so would put this sum over the cap on every correct run. A record a
+ * human approved was require_approval at decision time and stays excluded
+ * after it executes.
+ */
+function allowedAlone(record: RefundLedgerRecord): boolean {
+  return MOVED_OR_MAY_HAVE.has(record.status) && record.decisionRecord.outcome === 'allow';
+}
+
+const MOVED_OR_MAY_HAVE: ReadonlySet<RefundLedgerRecordStatus> = new Set<RefundLedgerRecordStatus>([
+  'attempted',
+  'ok',
+  'unknown',
+]);
 
 /** What a record consumes of a cap: the moved amount once known, else the expected one. Mirrors capDecisionFor in core's engine.ts. */
 function consumed(record: RefundLedgerRecord): number {
