@@ -85,8 +85,6 @@ async function runStep(
       const record = await resolveRefund(await handle.ledger.list(), step.refund, ['pending']);
       const result = await handle.agent.inbox.approve(record.id, step.actor);
       if (result.status === 'refused') {
-        console.warn('YO PROBLEM!!', result);
-
         throw new RunFailure('step_refused', `Approve refund refused: ${result.reason}`);
       }
       return;
@@ -217,8 +215,6 @@ export async function runOnce(
           traceIds: mutableTranscript.timeline.map((trace) => trace.id),
         };
       } catch (error) {
-        console.log('err', error);
-
         return {
           status: 'error',
           error: new RunFailure('unexpected', 'Assertion threw an error', {

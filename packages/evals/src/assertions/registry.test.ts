@@ -15,6 +15,7 @@ import {
   type DecisionRecord,
   type DecisionResult,
   type DenyReason,
+  type PolicyEngineConfig,
   type PolicyRequest,
   type RefundLedgerRecord,
   type RequireApprovalReason,
@@ -25,7 +26,9 @@ import {
   type ToolResultState,
   type TurnOutcome,
 } from '@kept-hq/core';
-import type { Observation } from '../run/types.js';
+import type { AssertionResult, Observation } from '../run/types.js';
+import type { AssertionKind, AssertionOf, CaseAssertion } from '../case/schema.js';
+import { evaluateAssertion } from './registry.js';
 
 export const NOW = Date.UTC(2026, 8, 10, 12);
 const HOUR = 3_600_000;
@@ -336,67 +339,872 @@ describe('tool_call_sequence', () => {
   });
 });
 
+// --- Shared by the kinds below -------------------------------------------------------
+
+/** Evaluates one assertion against an observation; the id and the toggle list are noise here. */
+function check<K extends AssertionKind>(
+  observation: Observation,
+  assertion: Omit<AssertionOf<K>, 'id' | 'expectRedUnder'> & { kind: K },
+): AssertionResult {
+  // The spread of a generic Omit is opaque to TypeScript's overlap check; the
+  // schema is what guarantees the shape, so the cast goes through unknown.
+  const full: unknown = { id: 'test', expectRedUnder: [], ...assertion };
+  return evaluateAssertion(observation, full as CaseAssertion);
+}
+
+function reasonOf(result: AssertionResult): string {
+  if (result.passed) throw new Error('expected a failure');
+  return result.reason;
+}
+
+function traceIdOf(result: AssertionResult): string | undefined {
+  if (result.passed) throw new Error('expected a failure');
+  return result.traceId;
+}
+
+/** A record the backend has not executed: no refund id, no moved amount. */
+function openRecord(overrides: Partial<RefundLedgerRecord> = {}): RefundLedgerRecord {
+  const record = ledgerRecord({ status: 'pending', ...overrides });
+  delete record.backendRefundId;
+  delete record.refundedAmountMinorUnits;
+  delete record.refundedAmountCurrency;
+  return record;
+}
+
+const DAY = 24 * HOUR;
+
 describe('tool_calls', () => {
-  it.todo('counts tool_execution spans matching tool, state and an args subset');
-  it.todo('an args subset matches when every named argument is deeply equal');
-  it.todo('the count bounds eq, gte and lte are all checked');
+  const observation = makeObservation({
+    ...conversations([
+      turnTrace({
+        tools: [
+          { name: 'lookup_order', args: { orderId: 'order-1005' } },
+          { name: 'issue_refund', args: { orderId: 'order-1005', quantity: 1 }, state: 'unknown' },
+        ],
+      }),
+      turnTrace({
+        tools: [
+          { name: 'issue_refund', args: { orderId: 'order-1005', quantity: 1 }, state: 'failed' },
+        ],
+      }),
+    ]),
+  });
+
+  it('counts tool_execution spans matching tool, state and an args subset', () => {
+    expect(check(observation, { kind: 'tool_calls', where: {}, count: { eq: 3 } }).passed).toBe(
+      true,
+    );
+    expect(
+      check(observation, { kind: 'tool_calls', where: { tool: 'issue_refund' }, count: { eq: 2 } })
+        .passed,
+    ).toBe(true);
+    expect(
+      check(observation, {
+        kind: 'tool_calls',
+        where: { tool: 'issue_refund', state: 'unknown' },
+        count: { eq: 1 },
+      }).passed,
+    ).toBe(true);
+    expect(
+      check(observation, {
+        kind: 'tool_calls',
+        where: { tool: 'issue_refund', args: { orderId: 'order-1005' } },
+        count: { eq: 2 },
+      }).passed,
+    ).toBe(true);
+    // `at` narrows to one turn.
+    expect(
+      check(observation, {
+        kind: 'tool_calls',
+        where: { tool: 'issue_refund' },
+        count: { eq: 1 },
+        at: { conversation: 1, turn: 2 },
+      }).passed,
+    ).toBe(true);
+  });
+  it('an args subset matches when every named argument is deeply equal', () => {
+    const nested = makeObservation({
+      ...conversations([
+        turnTrace({
+          tools: [
+            { name: 'issue_refund', args: { orderId: 'order-1005', line: { id: 'l-1', qty: 2 } } },
+          ],
+        }),
+      ]),
+    });
+    expect(
+      check(nested, {
+        kind: 'tool_calls',
+        where: { args: { line: { id: 'l-1', qty: 2 } } },
+        count: { eq: 1 },
+      }).passed,
+    ).toBe(true);
+    // A nested object must match whole: a partial inner object is not a subset match.
+    expect(
+      check(nested, {
+        kind: 'tool_calls',
+        where: { args: { line: { id: 'l-1' } } },
+        count: { eq: 1 },
+      }).passed,
+    ).toBe(false);
+    // An argument the call does not carry never matches.
+    expect(
+      check(nested, {
+        kind: 'tool_calls',
+        where: { args: { reason: 'damaged' } },
+        count: { eq: 0 },
+      }).passed,
+    ).toBe(true);
+  });
+  it('the count bounds eq, gte and lte are all checked', () => {
+    const where = { tool: 'issue_refund' as const };
+    expect(check(observation, { kind: 'tool_calls', where, count: { gte: 2 } }).passed).toBe(true);
+    expect(check(observation, { kind: 'tool_calls', where, count: { lte: 1 } }).passed).toBe(false);
+    expect(
+      check(observation, { kind: 'tool_calls', where, count: { gte: 1, lte: 2 } }).passed,
+    ).toBe(true);
+    const red = check(observation, { kind: 'tool_calls', where, count: { eq: 1 } });
+    expect(reasonOf(red)).toMatch(/2/);
+    expect(traceIdOf(red)).toBeDefined();
+  });
 });
 
 describe('no_write_before_call', () => {
-  it.todo('passes when every write call has an earlier call of mustFollow');
-  it.todo('with sharedArg, the earlier call must carry the same value for that argument');
-  it.todo('fails naming the write call id that had no preceding call');
+  const lookupThenRefund = turnTrace({
+    tools: [
+      { name: 'lookup_order', args: { orderId: 'order-1002' } },
+      { name: 'issue_refund', args: { orderId: 'order-1002', orderItemId: 'order-1002-line-1' } },
+    ],
+  });
+
+  it('passes when every write call has an earlier call of mustFollow', () => {
+    const observation = makeObservation({ ...conversations([lookupThenRefund]) });
+    expect(
+      check(observation, {
+        kind: 'no_write_before_call',
+        write: 'issue_refund',
+        mustFollow: 'lookup_order',
+      }).passed,
+    ).toBe(true);
+    // Across turns of one conversation the lookup still counts.
+    const acrossTurns = makeObservation({
+      ...conversations([
+        turnTrace({ tools: [{ name: 'lookup_order', args: { orderId: 'order-1002' } }] }),
+        turnTrace({ tools: [{ name: 'issue_refund', args: { orderId: 'order-1002' } }] }),
+      ]),
+    });
+    expect(
+      check(acrossTurns, {
+        kind: 'no_write_before_call',
+        write: 'issue_refund',
+        mustFollow: 'lookup_order',
+        sharedArg: 'orderId',
+      }).passed,
+    ).toBe(true);
+    // Across conversations it does not: a lookup in chat 2 never justifies a write in chat 1.
+    const acrossConversations = makeObservation({
+      ...conversations(
+        [turnTrace({ tools: [{ name: 'issue_refund', args: { orderId: 'order-1002' } }] })],
+        [
+          turnTrace({
+            conversationId: 'conv-2',
+            tools: [{ name: 'lookup_order', args: { orderId: 'order-1002' } }],
+          }),
+        ],
+      ),
+    });
+    expect(
+      check(acrossConversations, {
+        kind: 'no_write_before_call',
+        write: 'issue_refund',
+        mustFollow: 'lookup_order',
+      }).passed,
+    ).toBe(false);
+  });
+  it('with sharedArg, the earlier call must carry the same value for that argument', () => {
+    const otherOrder = makeObservation({
+      ...conversations([
+        turnTrace({
+          tools: [
+            { name: 'lookup_order', args: { orderId: 'order-1005' } },
+            { name: 'issue_refund', args: { orderId: 'order-1002' } },
+          ],
+        }),
+      ]),
+    });
+    expect(
+      check(otherOrder, {
+        kind: 'no_write_before_call',
+        write: 'issue_refund',
+        mustFollow: 'lookup_order',
+      }).passed,
+    ).toBe(true);
+    expect(
+      check(otherOrder, {
+        kind: 'no_write_before_call',
+        write: 'issue_refund',
+        mustFollow: 'lookup_order',
+        sharedArg: 'orderId',
+      }).passed,
+    ).toBe(false);
+    // A write that does not carry the shared argument at all is never justified.
+    const noArg = makeObservation({
+      ...conversations([
+        turnTrace({
+          tools: [
+            { name: 'lookup_order', args: {} },
+            { name: 'issue_refund', args: {} },
+          ],
+        }),
+      ]),
+    });
+    expect(
+      check(noArg, {
+        kind: 'no_write_before_call',
+        write: 'issue_refund',
+        mustFollow: 'lookup_order',
+        sharedArg: 'orderId',
+      }).passed,
+    ).toBe(false);
+  });
+  it('fails naming the write call that had no preceding call', () => {
+    const refundFirst = turnTrace({
+      tools: [
+        { name: 'issue_refund', args: { orderId: 'order-1002' } },
+        { name: 'lookup_order', args: { orderId: 'order-1002' } },
+      ],
+    });
+    const observation = makeObservation({ ...conversations([refundFirst]) });
+    const red = check(observation, {
+      kind: 'no_write_before_call',
+      write: 'issue_refund',
+      mustFollow: 'lookup_order',
+      sharedArg: 'orderId',
+    });
+    expect(reasonOf(red)).toMatch(/issue_refund requires lookup_order/);
+    expect(reasonOf(red)).toMatch(/orderId/);
+    expect(traceIdOf(red)).toBe(refundFirst.id);
+  });
 });
 
 describe('ledger_records', () => {
-  it.todo('counts records matching orderId, orderItemId, quantity and any of the statuses');
-  it.todo('an empty where counts every record');
+  const observation = makeObservation({
+    ledger: [
+      ledgerRecord({ id: 'r-1' }),
+      openRecord({ id: 'r-2', orderItemId: 'order-1002-line-2', amountMinorUnits: 1200 }),
+      ledgerRecord({
+        id: 'r-3',
+        orderId: 'order-1005',
+        orderItemId: 'order-1005-line-1',
+        quantity: 2,
+      }),
+      openRecord({ id: 'r-4', status: 'denied' }),
+    ],
+  });
+
+  it('counts records matching orderId, orderItemId, quantity and any of the statuses', () => {
+    expect(
+      check(observation, {
+        kind: 'ledger_records',
+        where: { orderId: 'order-1002' },
+        count: { eq: 3 },
+      }).passed,
+    ).toBe(true);
+    expect(
+      check(observation, {
+        kind: 'ledger_records',
+        where: { orderId: 'order-1002', orderItemId: 'order-1002-line-1' },
+        count: { eq: 2 },
+      }).passed,
+    ).toBe(true);
+    expect(
+      check(observation, {
+        kind: 'ledger_records',
+        where: { orderId: 'order-1002', status: ['pending', 'denied'] },
+        count: { eq: 2 },
+      }).passed,
+    ).toBe(true);
+    expect(
+      check(observation, { kind: 'ledger_records', where: { quantity: 2 }, count: { eq: 1 } })
+        .passed,
+    ).toBe(true);
+    const red = check(observation, {
+      kind: 'ledger_records',
+      where: { status: ['ok'] },
+      count: { eq: 0 },
+    });
+    expect(reasonOf(red)).toMatch(/received: 2/);
+  });
+  it('an empty where counts every record', () => {
+    expect(check(observation, { kind: 'ledger_records', where: {}, count: { eq: 4 } }).passed).toBe(
+      true,
+    );
+    expect(
+      check(makeObservation(), { kind: 'ledger_records', where: {}, count: { eq: 0 } }).passed,
+    ).toBe(true);
+  });
 });
 
 describe('policy_decision', () => {
-  it.todo('finds the policy_decision span whose request matches the selector, first or last');
-  it.todo('checks the outcome, and the reason only when one is expected');
-  it.todo('fails when no decision was made for the selector');
+  const observation = makeObservation({
+    ...conversations([
+      turnTrace({
+        tools: [
+          {
+            name: 'issue_refund',
+            args: { orderId: 'order-1002', orderItemId: 'order-1002-line-1', quantity: 1 },
+            decision: { request: refundRequest(), outcome: 'allow' },
+          },
+        ],
+      }),
+      turnTrace({
+        tools: [
+          {
+            name: 'issue_refund',
+            args: { orderId: 'order-1002', orderItemId: 'order-1002-line-1', quantity: 1 },
+            decision: { request: refundRequest(), outcome: 'deny', reason: 'already_requested' },
+          },
+          {
+            name: 'issue_refund',
+            args: { orderId: 'order-1002', orderItemId: 'order-1002-line-2', quantity: 1 },
+            decision: {
+              request: refundRequest({ orderItemId: 'order-1002-line-2', amountMinorUnits: 1200 }),
+              outcome: 'require_approval',
+              reason: 'cap_exceeded',
+            },
+          },
+        ],
+      }),
+    ]),
+  });
+  const boot = { orderId: 'order-1002', orderItemId: 'order-1002-line-1' };
+
+  it('finds the policy_decision span whose request matches the selector, first or last', () => {
+    expect(
+      check(observation, {
+        kind: 'policy_decision',
+        refund: boot,
+        occurrence: 'first',
+        expected: { outcome: 'allow' },
+      }).passed,
+    ).toBe(true);
+    expect(
+      check(observation, {
+        kind: 'policy_decision',
+        refund: boot,
+        occurrence: 'last',
+        expected: { outcome: 'deny', reason: 'already_requested' },
+      }).passed,
+    ).toBe(true);
+    // A line-less selector matches every decision on the order; last is the insoles.
+    expect(
+      check(observation, {
+        kind: 'policy_decision',
+        refund: { orderId: 'order-1002' },
+        occurrence: 'last',
+        expected: { outcome: 'require_approval', reason: 'cap_exceeded' },
+      }).passed,
+    ).toBe(true);
+  });
+  it('checks the outcome, and the reason only when one is expected', () => {
+    expect(
+      check(observation, {
+        kind: 'policy_decision',
+        refund: boot,
+        occurrence: 'last',
+        expected: { outcome: 'deny' },
+      }).passed,
+    ).toBe(true);
+    const wrongReason = check(observation, {
+      kind: 'policy_decision',
+      refund: boot,
+      occurrence: 'last',
+      expected: { outcome: 'deny', reason: 'not_eligible' },
+    });
+    expect(reasonOf(wrongReason)).toMatch(/already_requested/);
+    const wrongOutcome = check(observation, {
+      kind: 'policy_decision',
+      refund: boot,
+      occurrence: 'first',
+      expected: { outcome: 'deny' },
+    });
+    expect(reasonOf(wrongOutcome)).toMatch(/allow/);
+    expect(traceIdOf(wrongOutcome)).toBe(observation.timeline[0]!.id);
+  });
+  it('fails when no decision was made for the selector', () => {
+    const red = check(observation, {
+      kind: 'policy_decision',
+      refund: { orderId: 'order-1004' },
+      occurrence: 'last',
+      expected: { outcome: 'allow' },
+    });
+    expect(reasonOf(red)).toMatch(/No matching policy decision/);
+  });
 });
 
 describe('composed_cap_sum', () => {
-  it.todo(
-    'sums counting records (COUNTING_STATUSES) in the cap’s scope and one currency, like the ledger does',
-  );
-  it.todo(
-    'per_call checks each record alone; per_order by orderId; per_customer by the key of the email; per_day everything',
-  );
-  it.todo('windowed kinds count from clockAtEnd minus the declared window');
-  it.todo(
-    'compares against the DECLARED cap, so a toggle that filters the engine’s config still turns this red',
-  );
-  it.todo('a declared cap missing for the kind and currency is a failure that says so');
+  // Default caps: 100 per call, 100 per order, 150 per customer over 30 days,
+  // 300 per day, in USD and in EUR. sam owns order-1002 and order-1005.
+  const boot = ledgerRecord({ id: 'boot' }); // 8900, order-1002, sam
+  const insoles = openRecord({
+    id: 'insoles',
+    orderItemId: 'order-1002-line-2',
+    amountMinorUnits: 1200,
+  });
+  const baseLayer = ledgerRecord({
+    id: 'base-layer',
+    orderId: 'order-1005',
+    orderItemId: 'order-1005-line-1',
+    amountMinorUnits: 7900,
+    refundedAmountMinorUnits: 7900,
+  });
+  const anaJacket = ledgerRecord({
+    id: 'jacket',
+    orderId: 'order-1004',
+    orderItemId: 'order-1004-line-1',
+    customerKey: customerKeyFor({ email: 'ana@example.com' }),
+    amountMinorUnits: 15900,
+    currency: 'EUR',
+    refundedAmountMinorUnits: 15900,
+    refundedAmountCurrency: 'EUR',
+  });
+  const perOrder = {
+    kind: 'composed_cap_sum' as const,
+    cap: 'per_order' as const,
+    currency: 'USD' as const,
+    orderId: 'order-1002',
+  };
+
+  it('sums counting records (COUNTING_STATUSES) in the cap’s scope and one currency, like the ledger does', () => {
+    // 8900 executed + 1200 pending = 10100 over the 10000 per-order cap.
+    const over = check(makeObservation({ ledger: [boot, insoles] }), perOrder);
+    expect(reasonOf(over)).toMatch(/per_order sum 10100 over the declared cap 10000 USD/);
+    // A denied record never counts; a failed one neither.
+    const denied = openRecord({
+      id: 'insoles',
+      orderItemId: 'order-1002-line-2',
+      amountMinorUnits: 1200,
+      status: 'denied',
+    });
+    expect(check(makeObservation({ ledger: [boot, denied] }), perOrder).passed).toBe(true);
+    // Another currency on the same order is another cap.
+    const eurOnSameOrder = ledgerRecord({
+      id: 'eur',
+      amountMinorUnits: 9000,
+      currency: 'EUR',
+      refundedAmountCurrency: 'EUR',
+    });
+    expect(check(makeObservation({ ledger: [boot, eurOnSameOrder] }), perOrder).passed).toBe(true);
+    // What the backend moved is what counts, once known.
+    const movedLess = ledgerRecord({ id: 'boot', refundedAmountMinorUnits: 8800 });
+    expect(check(makeObservation({ ledger: [movedLess, insoles] }), perOrder).passed).toBe(true);
+  });
+  it('per_call checks each record alone; per_order by orderId; per_customer by the key of the email; per_day everything', () => {
+    const ledger = [boot, baseLayer, anaJacket];
+    // per_call: 8900 and 7900 are each under 10000, whatever they sum to.
+    expect(
+      check(makeObservation({ ledger }), {
+        kind: 'composed_cap_sum',
+        cap: 'per_call',
+        currency: 'USD',
+      }).passed,
+    ).toBe(true);
+    const big = ledgerRecord({
+      id: 'big',
+      amountMinorUnits: 12000,
+      refundedAmountMinorUnits: 12000,
+    });
+    const perCallRed = check(makeObservation({ ledger: [boot, big] }), {
+      kind: 'composed_cap_sum',
+      cap: 'per_call',
+      currency: 'USD',
+    });
+    expect(reasonOf(perCallRed)).toMatch(/1 record\(s\) over the per_call cap of 10000 USD: big/);
+    // per_order: order-1005's record is not order-1002's.
+    expect(check(makeObservation({ ledger }), perOrder).passed).toBe(true);
+    // per_customer: sam's two orders sum to 16800 over 15000; ana has nothing in USD.
+    const sam = check(makeObservation({ ledger }), {
+      kind: 'composed_cap_sum',
+      cap: 'per_customer',
+      currency: 'USD',
+      email: 'sam@example.com',
+    });
+    expect(reasonOf(sam)).toMatch(/per_customer sum 16800/);
+    expect(
+      check(makeObservation({ ledger }), {
+        kind: 'composed_cap_sum',
+        cap: 'per_customer',
+        currency: 'USD',
+        email: 'ana@example.com',
+      }).passed,
+    ).toBe(true);
+    // per_day: every USD record; 16800 is under 30000, a third one is not.
+    expect(
+      check(makeObservation({ ledger }), {
+        kind: 'composed_cap_sum',
+        cap: 'per_day',
+        currency: 'USD',
+      }).passed,
+    ).toBe(true);
+    const third = ledgerRecord({
+      id: 'third',
+      orderId: 'order-1001',
+      amountMinorUnits: 15000,
+      refundedAmountMinorUnits: 15000,
+    });
+    expect(
+      check(makeObservation({ ledger: [...ledger, third] }), {
+        kind: 'composed_cap_sum',
+        cap: 'per_day',
+        currency: 'USD',
+      }).passed,
+    ).toBe(false);
+  });
+  it('windowed kinds count from clockAtEnd minus the declared window', () => {
+    const perCustomer = {
+      kind: 'composed_cap_sum' as const,
+      cap: 'per_customer' as const,
+      currency: 'USD' as const,
+      email: 'sam@example.com',
+    };
+    // Thirty-one days back is outside the 30-day window.
+    const old = ledgerRecord({ ...baseLayer, createdAt: NOW - 31 * DAY });
+    expect(
+      check(makeObservation({ ledger: [boot, old], clockAtEnd: NOW }), perCustomer).passed,
+    ).toBe(true);
+    // Exactly at the floor is inside, like LedgerQuery.sinceMs.
+    const atFloor = ledgerRecord({ ...baseLayer, createdAt: NOW - 30 * DAY });
+    expect(
+      check(makeObservation({ ledger: [boot, atFloor], clockAtEnd: NOW }), perCustomer).passed,
+    ).toBe(false);
+    // The window ends at the run's clock, not at the wall clock.
+    expect(
+      check(makeObservation({ ledger: [boot, old], clockAtEnd: NOW - 2 * DAY }), perCustomer)
+        .passed,
+    ).toBe(false);
+  });
+  it('compares against the DECLARED cap, so a toggle that filters the engine’s config still turns this red', () => {
+    const perCallOnly: PolicyEngineConfig = {
+      version: 'toggled',
+      caps: DEFAULT_POLICY_CONFIG.caps.filter((cap) => cap.kind === 'per_call'),
+    };
+    const observation = makeObservation({
+      ledger: [boot, insoles],
+      declaredPolicy: DEFAULT_POLICY_CONFIG,
+      effectivePolicy: perCallOnly,
+      faultToggles: ['caps-per-call-only'],
+    });
+    expect(check(observation, perOrder).passed).toBe(false);
+  });
+  it('a declared cap missing for the kind and currency is a failure that says so', () => {
+    const usdOnly: PolicyEngineConfig = {
+      version: 'usd',
+      caps: DEFAULT_POLICY_CONFIG.caps.filter((cap) => cap.currency === 'USD'),
+    };
+    const red = check(makeObservation({ ledger: [anaJacket], declaredPolicy: usdOnly }), {
+      kind: 'composed_cap_sum',
+      cap: 'per_order',
+      currency: 'EUR',
+      orderId: 'order-1004',
+    });
+    expect(reasonOf(red)).toMatch(/no declared per_order cap in EUR/);
+  });
 });
 
 describe('retrieval_verdict', () => {
-  it.todo('reads the first, last or every retrieval span of the addressed turn(s)');
-  it.todo('fails when the addressed turn(s) have no retrieval span');
+  const twoSearches = turnTrace({
+    tools: [
+      {
+        name: 'search_policy',
+        args: { question: 'mobile number?' },
+        retrieval: { verdict: 'no_match' },
+      },
+      {
+        name: 'search_policy',
+        args: { question: 'phone number?' },
+        retrieval: { verdict: 'grounded', chunks: [chunk()] },
+      },
+    ],
+  });
+
+  it('reads the first, last or every retrieval span of the addressed turn(s)', () => {
+    const observation = makeObservation({ ...conversations([twoSearches]) });
+    expect(
+      check(observation, { kind: 'retrieval_verdict', verdict: 'no_match', occurrence: 'first' })
+        .passed,
+    ).toBe(true);
+    expect(
+      check(observation, { kind: 'retrieval_verdict', verdict: 'grounded', occurrence: 'last' })
+        .passed,
+    ).toBe(true);
+    const mixed = check(observation, {
+      kind: 'retrieval_verdict',
+      verdict: 'no_match',
+      occurrence: 'every',
+    });
+    expect(reasonOf(mixed)).toMatch(/Unexpected retrieval verdicts/);
+    const wrongLast = check(observation, {
+      kind: 'retrieval_verdict',
+      verdict: 'no_match',
+      occurrence: 'last',
+    });
+    expect(reasonOf(wrongLast)).toMatch(/Expected: no_match, got: grounded/);
+    expect(traceIdOf(wrongLast)).toBe(twoSearches.id);
+    // `every` over two turns that both came back empty.
+    const empty = makeObservation({
+      ...conversations([
+        turnTrace({ tools: [{ name: 'search_policy', retrieval: { verdict: 'no_match' } }] }),
+        turnTrace({ tools: [{ name: 'search_policy', retrieval: { verdict: 'no_match' } }] }),
+      ]),
+    });
+    expect(
+      check(empty, { kind: 'retrieval_verdict', verdict: 'no_match', occurrence: 'every' }).passed,
+    ).toBe(true);
+  });
+  it('fails when the addressed turn(s) have no retrieval span', () => {
+    const noSearch = makeObservation({
+      ...conversations([
+        turnTrace({ tools: [{ name: 'lookup_order', args: { orderId: 'order-1001' } }] }),
+      ]),
+    });
+    const red = check(noSearch, {
+      kind: 'retrieval_verdict',
+      verdict: 'grounded',
+      occurrence: 'last',
+    });
+    expect(reasonOf(red)).toMatch(/No search_policy spans/);
+  });
 });
 
 describe('retrieved_sections', () => {
-  it.todo(
-    'counts chunks that cleared the threshold, never dropped ones, matching docId, sectionRef and tier',
-  );
+  const observation = makeObservation({
+    ...conversations([
+      turnTrace({
+        tools: [
+          {
+            name: 'search_policy',
+            retrieval: {
+              verdict: 'grounded',
+              chunks: [
+                chunk({ id: 'LH-RET@1.2#§6', sectionRef: '§6' }),
+                chunk({
+                  id: 'HC-LH-05',
+                  docId: 'HC-LH-05',
+                  sectionRef: 'HC-LH-05',
+                  tier: 'informational',
+                  effectiveFrom: null,
+                }),
+                chunk({
+                  id: 'LH-HOL-2025@1.0#§1',
+                  docId: 'LH-HOL-2025',
+                  sectionRef: '§1',
+                  distance: 0.7,
+                  dropped: true,
+                }),
+              ],
+            },
+          },
+        ],
+      }),
+    ]),
+  });
+
+  it('counts chunks that cleared the threshold, never dropped ones, matching docId, sectionRef and tier', () => {
+    expect(
+      check(observation, { kind: 'retrieved_sections', where: {}, count: { eq: 2 } }).passed,
+    ).toBe(true);
+    expect(
+      check(observation, {
+        kind: 'retrieved_sections',
+        where: { docId: 'LH-RET', sectionRef: '§6', tier: 'binding' },
+        count: { gte: 1 },
+      }).passed,
+    ).toBe(true);
+    expect(
+      check(observation, {
+        kind: 'retrieved_sections',
+        where: { tier: 'informational' },
+        count: { eq: 1 },
+      }).passed,
+    ).toBe(true);
+    // The dropped holiday chunk was ranked and cut: it was not retrieved.
+    expect(
+      check(observation, {
+        kind: 'retrieved_sections',
+        where: { docId: 'LH-HOL-2025' },
+        count: { eq: 0 },
+      }).passed,
+    ).toBe(true);
+    const red = check(observation, {
+      kind: 'retrieved_sections',
+      where: { docId: 'LH-RET' },
+      count: { eq: 0 },
+    });
+    expect(reasonOf(red)).toMatch(/received: 1/);
+    expect(traceIdOf(red)).toBe(observation.timeline[0]!.id);
+    // No retrieval at all is a failure, not a count of zero.
+    const noSearch = makeObservation({ ...conversations([turnTrace()]) });
+    expect(
+      reasonOf(check(noSearch, { kind: 'retrieved_sections', where: {}, count: { eq: 0 } })),
+    ).toMatch(/No search_policy spans/);
+  });
 });
 
 describe('reply_contains / reply_not_contains', () => {
-  it.todo('reads the reply of the addressed turn, the last turn of the run by default');
-  it.todo('matches case-insensitively; mode all needs every string, mode any needs one');
-  it.todo('a turn without a reply fails reply_contains and passes reply_not_contains');
+  const first = turnTrace({ outcome: { type: 'reply', message: 'The fee is $6.50 per return.' } });
+  const second = turnTrace({
+    conversationId: 'conv-2',
+    outcome: { type: 'reply', message: 'Please contact support@test.com.' },
+  });
+  const observation = makeObservation({ ...conversations([first], [second]) });
+
+  it('reads the reply of the addressed turn, the last turn of the run by default', () => {
+    expect(
+      check(observation, { kind: 'reply_contains', strings: ['support@test.com'], mode: 'all' })
+        .passed,
+    ).toBe(true);
+    expect(
+      check(observation, { kind: 'reply_contains', strings: ['6.50'], mode: 'all' }).passed,
+    ).toBe(false);
+    expect(
+      check(observation, {
+        kind: 'reply_contains',
+        strings: ['6.50'],
+        mode: 'all',
+        at: { conversation: 1 },
+      }).passed,
+    ).toBe(true);
+    expect(
+      check(observation, {
+        kind: 'reply_not_contains',
+        strings: ['6.50'],
+        at: { conversation: 2, turn: 1 },
+      }).passed,
+    ).toBe(true);
+  });
+  it('matches case-insensitively; mode all needs every string, mode any needs one', () => {
+    const single = makeObservation({ ...conversations([first]) });
+    expect(
+      check(single, { kind: 'reply_contains', strings: ['THE FEE', 'per RETURN'], mode: 'all' })
+        .passed,
+    ).toBe(true);
+    const missingOne = check(single, {
+      kind: 'reply_contains',
+      strings: ['the fee', 'free'],
+      mode: 'all',
+    });
+    expect(reasonOf(missingOne)).toMatch(/free/);
+    expect(traceIdOf(missingOne)).toBe(first.id);
+    expect(
+      check(single, { kind: 'reply_contains', strings: ['free', 'the fee'], mode: 'any' }).passed,
+    ).toBe(true);
+    expect(
+      check(single, { kind: 'reply_contains', strings: ['free', 'gratis'], mode: 'any' }).passed,
+    ).toBe(false);
+    const contained = check(single, { kind: 'reply_not_contains', strings: ['FEE', 'gratis'] });
+    expect(reasonOf(contained)).toMatch(/FEE/);
+    expect(check(single, { kind: 'reply_not_contains', strings: ['gratis'] }).passed).toBe(true);
+  });
+  it('a turn without a reply fails both kinds, naming the outcome', () => {
+    const failed = makeObservation({
+      ...conversations([turnTrace({ outcome: { type: 'failed', reason: 'max_rounds' } })]),
+    });
+    expect(
+      reasonOf(check(failed, { kind: 'reply_contains', strings: ['x'], mode: 'all' })),
+    ).toMatch(/not a reply: failed/);
+    expect(reasonOf(check(failed, { kind: 'reply_not_contains', strings: ['x'] }))).toMatch(
+      /not a reply: failed/,
+    );
+  });
 });
 
 describe('turn_outcome', () => {
-  it.todo('checks the type, and the failure reason only when one is expected');
+  it('checks the type, and the failure reason only when one is expected', () => {
+    const reply = makeObservation({ ...conversations([turnTrace()]) });
+    expect(check(reply, { kind: 'turn_outcome', expected: { type: 'reply' } }).passed).toBe(true);
+    expect(reasonOf(check(reply, { kind: 'turn_outcome', expected: { type: 'failed' } }))).toMatch(
+      /Expected: failed, got: reply/,
+    );
+
+    const refused = makeObservation({
+      ...conversations([turnTrace({ outcome: { type: 'failed', reason: 'refusal' } })]),
+    });
+    expect(check(refused, { kind: 'turn_outcome', expected: { type: 'failed' } }).passed).toBe(
+      true,
+    );
+    expect(
+      check(refused, { kind: 'turn_outcome', expected: { type: 'failed', reason: 'refusal' } })
+        .passed,
+    ).toBe(true);
+    expect(
+      reasonOf(
+        check(refused, {
+          kind: 'turn_outcome',
+          expected: { type: 'failed', reason: 'max_rounds' },
+        }),
+      ),
+    ).toMatch(/expected reason: max_rounds; got: refusal/);
+
+    // The last turn of the addressed conversation is the one checked.
+    const full = makeObservation({
+      ...conversations([turnTrace(), turnTrace({ outcome: { type: 'conversation_full' } })]),
+    });
+    expect(
+      check(full, { kind: 'turn_outcome', expected: { type: 'conversation_full' } }).passed,
+    ).toBe(true);
+    expect(
+      check(full, {
+        kind: 'turn_outcome',
+        expected: { type: 'reply' },
+        at: { conversation: 1, turn: 1 },
+      }).passed,
+    ).toBe(true);
+  });
 });
 
 describe('no_model_call_after_takeover', () => {
-  it.todo(
-    'passes when no trace of the conversation started after its take-over holds a model_call span',
-  );
-  it.todo('fails when the conversation was never taken over');
+  const HANDOFF = {
+    type: 'reply' as const,
+    message: 'A member of our support team has taken over.',
+  };
+
+  it('passes when no trace of the conversation started after its take-over holds a model_call span', () => {
+    const observation = makeObservation({
+      ...conversations([turnTrace(), turnTrace({ modelCalls: 0, outcome: HANDOFF })]),
+      takeOvers: [{ conversation: 1, afterTurn: 1, at: NOW }],
+    });
+    expect(
+      check(observation, { kind: 'no_model_call_after_takeover', conversation: 1 }).passed,
+    ).toBe(true);
+
+    // The turn before the take-over may have asked the model; the one after may not.
+    const offending = turnTrace({ outcome: HANDOFF });
+    const red = check(
+      makeObservation({
+        ...conversations([turnTrace(), offending]),
+        takeOvers: [{ conversation: 1, afterTurn: 1, at: NOW }],
+      }),
+      { kind: 'no_model_call_after_takeover', conversation: 1 },
+    );
+    expect(reasonOf(red)).toMatch(/model call after/);
+    expect(traceIdOf(red)).toBe(offending.id);
+
+    // Only the taken-over conversation is checked.
+    const other = makeObservation({
+      ...conversations(
+        [turnTrace(), turnTrace()],
+        [turnTrace({ conversationId: 'conv-2', modelCalls: 0 })],
+      ),
+      takeOvers: [{ conversation: 2, afterTurn: 0, at: NOW }],
+    });
+    expect(check(other, { kind: 'no_model_call_after_takeover', conversation: 2 }).passed).toBe(
+      true,
+    );
+  });
+  it('fails when the conversation was never taken over', () => {
+    const observation = makeObservation({ ...conversations([turnTrace({ modelCalls: 0 })]) });
+    expect(
+      reasonOf(check(observation, { kind: 'no_model_call_after_takeover', conversation: 1 })),
+    ).toMatch(/never taken over/);
+  });
 });
