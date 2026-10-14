@@ -1,0 +1,26 @@
+id: retrieval-price-adjustment-loomhaven
+title: Price adjustment where the policy has a clause
+source: EC-11, Loomhaven side
+description: >-
+  LH-RET §9 refunds the difference once per order for full-price items
+  reduced within seven days. The question names no order, so no refund
+  can be issued; the answer is the clause, cited.
+tags: [retrieval]
+storeId: loomhaven
+clock: 2026-09-10T12:00:00Z
+steps:
+  - kind: customer_message
+    message: >-
+      The jacket I ordered five days ago at full price just went on sale.
+      Can I get the price difference refunded?
+assertions:
+  - id: clause-retrieved
+    kind: retrieved_sections
+    where: { docId: LH-RET, sectionRef: '§9', tier: binding }
+    count: { gte: 1 }
+  - id: clause-cited
+    kind: reply_contains
+    strings: ['§9']
+  - id: nothing-recorded
+    kind: ledger_records
+    count: { eq: 0 }

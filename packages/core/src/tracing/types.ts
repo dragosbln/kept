@@ -183,6 +183,18 @@ export type TurnSpanPayload = Extract<SpanPayload, { kind: 'turn' }>;
 export type PolicyDecisionSpanPayload = Extract<SpanPayload, { kind: 'policy_decision' }>;
 export type RetrievalSpanPayload = Extract<SpanPayload, { kind: 'retrieval' }>;
 
+export type CompletedModelCallSpanPayload = Extract<CompletedSpanPayload, { kind: 'model_call' }>;
+export type CompletedToolExecutionSpanPayload = Extract<
+  CompletedSpanPayload,
+  { kind: 'tool_execution' }
+>;
+export type CompletedTurnSpanPayload = Extract<CompletedSpanPayload, { kind: 'turn' }>;
+export type CompletedPolicyDecisionSpanPayload = Extract<
+  CompletedSpanPayload,
+  { kind: 'policy_decision' }
+>;
+export type CompletedRetrievalSpanPayload = Extract<CompletedSpanPayload, { kind: 'retrieval' }>;
+
 // --- Trace payloads ---------------------------------------------------------
 
 export type TracePayload = {

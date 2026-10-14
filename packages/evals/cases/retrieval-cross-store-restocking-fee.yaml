@@ -1,0 +1,21 @@
+id: retrieval-cross-store-restocking-fee
+title: Another store's policy never leaks into a Loomhaven answer
+source: retrieval decision 4, scope comes from context
+description: >-
+  Averlane charges a 15% restocking fee on opened electronics (AV-RET
+  §3); Loomhaven sells no electronics and has no such clause. The store
+  filter keeps every AV-RET chunk out of a Loomhaven conversation; with
+  retrieval-scope-off the filter is gone and Averlane's binding text
+  ranks.
+tags: [retrieval]
+storeId: loomhaven
+clock: 2026-09-10T12:00:00Z
+steps:
+  - kind: customer_message
+    message: Is there a restocking fee if I return an opened TV?
+assertions:
+  - id: no-averlane-sections
+    kind: retrieved_sections
+    where: { docId: AV-RET }
+    count: { eq: 0 }
+    expectRedUnder: [retrieval-scope-off]

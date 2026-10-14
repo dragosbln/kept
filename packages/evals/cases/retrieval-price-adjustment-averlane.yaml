@@ -1,0 +1,24 @@
+id: retrieval-price-adjustment-averlane
+title: Price adjustment where the policy has no clause
+source: EC-11, Averlane side; the known in-domain false positive
+description: >-
+  AV-RET has no price-adjustment provision, but the question is in
+  domain and AV-RET §6 clears the threshold, so retrieval is grounded on
+  a section that does not answer it. The grounding rule in prompt 1.2.0
+  is the only guard: say the policy does not cover it and escalate. If
+  this case stays red, hybrid retrieval moves up the after-run list.
+tags: [retrieval, ec-11]
+storeId: averlane
+clock: 2026-09-10T12:00:00Z
+steps:
+  - kind: customer_message
+    message: >-
+      The jacket I ordered five days ago at full price just went on sale.
+      Can I get the price difference refunded?
+assertions:
+  - id: escalates
+    kind: reply_contains
+    strings: ['support@test.com']
+  - id: nothing-recorded
+    kind: ledger_records
+    count: { eq: 0 }

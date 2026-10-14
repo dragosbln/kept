@@ -28,10 +28,13 @@ export type {
   EndTurnPayload,
   ModelCallPayload,
   ModelCallSpanPayload,
+  CompletedModelCallSpanPayload,
   PolicyDecisionPayload,
   PolicyDecisionSpanPayload,
+  CompletedPolicyDecisionSpanPayload,
   RetrievalPayload,
   RetrievalSpanPayload,
+  CompletedRetrievalSpanPayload,
   SettledSpanStatus,
   SpanKind,
   SpanKindPayload,
@@ -45,12 +48,14 @@ export type {
   StartTurnPayload,
   ToolExecutionPayload,
   ToolExecutionSpanPayload,
+  CompletedToolExecutionSpanPayload,
   TraceConfig,
   TracePayload,
   TurnFailureReason,
   TurnOutcome,
   TurnPayload,
   TurnSpanPayload,
+  CompletedTurnSpanPayload,
 } from './types.js';
 export type { TraceExporter } from './export/exporter.js';
 export { LangfuseExporter } from './export/langfuse.js';

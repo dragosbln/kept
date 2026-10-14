@@ -1,0 +1,34 @@
+id: retrieval-empty-escalates
+title: With nothing to find, a policy question escalates
+source: the host's policy-search-off mode (agent service, POLICY_SEARCH_OFF_WARNING)
+description: >-
+  The knowledge base is empty, so every search the model makes comes
+  back no_match: the prompt allows one retry with different wording,
+  then escalates. A real policy question, so the model reliably
+  searches; on the ingested corpus every such question grounds on some
+  section, and the questions that would miss are ones the model never
+  searches for, which is why the empty base is the only deterministic
+  way to reach this verdict through the model.
+tags: [retrieval, smoke]
+storeId: loomhaven
+clock: 2026-09-10T12:00:00Z
+fixtures:
+  knowledgeBase: empty
+steps:
+  - kind: customer_message
+    message: Is return shipping free?
+assertions:
+  - id: searched
+    kind: tool_calls
+    where: { tool: search_policy }
+    count: { gte: 1 }
+  - id: no-match
+    kind: retrieval_verdict
+    verdict: no_match
+    occurrence: every
+  - id: escalates
+    kind: reply_contains
+    strings: ['support@test.com']
+  - id: nothing-recorded
+    kind: ledger_records
+    count: { eq: 0 }

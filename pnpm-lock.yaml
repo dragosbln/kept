@@ -51,6 +51,9 @@ catalogs:
     vitest:
       specifier: ^4.1.10
       version: 4.1.10
+    yaml:
+      specifier: ^2.9.0
+      version: 2.9.1
     zod:
       specifier: ^4.1.0
       version: 4.4.3
@@ -95,7 +98,7 @@ importers:
         version: 7.0.2
       vitest:
         specifier: 'catalog:'
-        version: 4.1.10(@types/node@24.13.3)(happy-dom@20.12.0)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11))
+        version: 4.1.10(@types/node@24.13.3)(happy-dom@20.12.0)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11)(yaml@2.9.1))
 
   packages/adapter-medusa:
     dependencies:
@@ -108,7 +111,7 @@ importers:
         version: 7.0.2
       vitest:
         specifier: 'catalog:'
-        version: 4.1.10(@types/node@24.13.3)(happy-dom@20.12.0)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11))
+        version: 4.1.10(@types/node@24.13.3)(happy-dom@20.12.0)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11)(yaml@2.9.1))
 
   packages/core:
     dependencies:
@@ -139,20 +142,29 @@ importers:
         version: 7.0.2
       vitest:
         specifier: 'catalog:'
-        version: 4.1.10(@types/node@24.13.3)(happy-dom@20.12.0)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11))
+        version: 4.1.10(@types/node@24.13.3)(happy-dom@20.12.0)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11)(yaml@2.9.1))
 
   packages/evals:
     dependencies:
       '@kept-hq/core':
         specifier: workspace:*
         version: link:../core
+      yaml:
+        specifier: 'catalog:'
+        version: 2.9.1
+      zod:
+        specifier: 'catalog:'
+        version: 4.4.3
     devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.13.3
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
       vitest:
         specifier: 'catalog:'
-        version: 4.1.10(@types/node@24.13.3)(happy-dom@20.12.0)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11))
+        version: 4.1.10(@types/node@24.13.3)(happy-dom@20.12.0)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11)(yaml@2.9.1))
 
   packages/simulator:
     dependencies:
@@ -165,7 +177,7 @@ importers:
         version: 7.0.2
       vitest:
         specifier: 'catalog:'
-        version: 4.1.10(@types/node@24.13.3)(happy-dom@20.12.0)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11))
+        version: 4.1.10(@types/node@24.13.3)(happy-dom@20.12.0)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11)(yaml@2.9.1))
 
   packages/widget:
     devDependencies:
@@ -180,7 +192,7 @@ importers:
         version: 7.0.2
       vitest:
         specifier: 'catalog:'
-        version: 4.1.10(@types/node@24.13.3)(happy-dom@20.12.0)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11))
+        version: 4.1.10(@types/node@24.13.3)(happy-dom@20.12.0)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11)(yaml@2.9.1))
 
 packages:
 
@@ -1544,6 +1556,11 @@ packages:
       utf-8-validate:
         optional: true
 
+  yaml@2.9.1:
+    resolution: {integrity: sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
+
   zod@4.4.3:
     resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
@@ -1993,13 +2010,13 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.1
 
-  '@vitest/mocker@4.1.10(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11))':
+  '@vitest/mocker@4.1.10(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11)(yaml@2.9.1))':
     dependencies:
       '@vitest/spy': 4.1.10
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11)
+      vite: 8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11)(yaml@2.9.1)
 
   '@vitest/pretty-format@4.1.10':
     dependencies:
@@ -2362,7 +2379,7 @@ snapshots:
 
   undici-types@7.18.2: {}
 
-  vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11):
+  vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11)(yaml@2.9.1):
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.5
@@ -2374,11 +2391,12 @@ snapshots:
       esbuild: 0.28.2
       fsevents: 2.3.3
       tsx: 4.23.11
+      yaml: 2.9.1
 
-  vitest@4.1.10(@types/node@24.13.3)(happy-dom@20.12.0)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11)):
+  vitest@4.1.10(@types/node@24.13.3)(happy-dom@20.12.0)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11)(yaml@2.9.1)):
     dependencies:
       '@vitest/expect': 4.1.10
-      '@vitest/mocker': 4.1.10(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11))
+      '@vitest/mocker': 4.1.10(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11)(yaml@2.9.1))
       '@vitest/pretty-format': 4.1.10
       '@vitest/runner': 4.1.10
       '@vitest/snapshot': 4.1.10
@@ -2395,7 +2413,7 @@ snapshots:
       tinyexec: 1.3.0
       tinyglobby: 0.2.17
       tinyrainbow: 3.1.1
-      vite: 8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11)
+      vite: 8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.11)(yaml@2.9.1)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 24.13.3
@@ -2411,5 +2429,7 @@ snapshots:
       stackback: 0.0.2
 
   ws@8.21.3: {}
+
+  yaml@2.9.1: {}
 
   zod@4.4.3: {}

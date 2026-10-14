@@ -1,0 +1,33 @@
+id: takeover-stops-the-model
+title: After a human takes over, the model is never asked again
+source: inbox v0, conversation take-over
+description: >-
+  A WISMO turn, then an operator takes the conversation over, then the
+  customer writes again. The host answers the second turn with the
+  deferral text and never opens a model call; the trace of that turn
+  holds a turn span and nothing else.
+tags: [inbox, smoke]
+storeId: loomhaven
+clock: 2026-09-10T12:00:00Z
+steps:
+  - kind: customer_message
+    conversation: 1
+    message: Where is my order order-1001?
+  - kind: human_takeover
+    conversation: 1
+    actor: eval-operator
+  - kind: customer_message
+    conversation: 1
+    message: Any update on the delivery?
+assertions:
+  - id: no-model-call-after-takeover
+    kind: no_model_call_after_takeover
+    conversation: 1
+  - id: deferral-reply
+    kind: reply_contains
+    strings: ['taken over']
+    at: { conversation: 1, turn: 2 }
+  - id: second-turn-is-a-reply
+    kind: turn_outcome
+    expected: { type: reply }
+    at: { conversation: 1, turn: 2 }

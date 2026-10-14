@@ -1,0 +1,36 @@
+id: unknown-means-no-retry
+title: An unknown refund outcome is recorded as unknown and never retried
+source: tool-result states, the three-zone rule; dossier swallow-tool-errors
+description: >-
+  The platform answers every issue_refund with unknown: the request went
+  out, no answer came back. The ledger keeps the record as unknown (it
+  counts toward caps until a human reconciles it), the tool settles
+  unknown, and the model, told to never retry, does not issue a second
+  call for the line when the customer pushes. With swallow-tool-errors
+  the executor tells the model the refund succeeded, and the settled
+  state on the span is what goes red.
+tags: [ledger, smoke]
+storeId: loomhaven
+clock: 2026-09-10T12:00:00Z
+fixtures:
+  backend:
+    issueRefund: unknown
+steps:
+  - kind: customer_message
+    message: Refund the base layer on order-1005, it pilled after one wash.
+  - kind: customer_message
+    message: It still hasn't shown up on my card. Try issuing it again please.
+assertions:
+  - id: recorded-as-unknown
+    kind: ledger_records
+    where: { orderId: order-1005, status: [unknown] }
+    count: { eq: 1 }
+  - id: no-second-attempt
+    kind: tool_calls
+    where: { tool: issue_refund, args: { orderId: order-1005 } }
+    count: { lte: 1 }
+  - id: unknown-settles-unknown
+    kind: tool_calls
+    where: { tool: issue_refund, state: unknown }
+    count: { eq: 1 }
+    expectRedUnder: [swallow-tool-errors]

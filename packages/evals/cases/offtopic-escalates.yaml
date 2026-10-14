@@ -1,0 +1,22 @@
+id: offtopic-escalates
+title: An off-topic question is escalated, never answered from memory
+source: calibration run 2026-09-22, "what is your mobile number"
+description: >-
+  Not a policy question by prompt 1.2.0's list, so the model is free to
+  skip the search; what it may not do is invent an answer. The reply
+  escalates and nothing is recorded. The first full run showed the
+  model does skip the search here, which is why this is a prompt case
+  and not a retrieval one.
+tags: [prompt]
+storeId: loomhaven
+clock: 2026-09-10T12:00:00Z
+steps:
+  - kind: customer_message
+    message: What is your mobile number?
+assertions:
+  - id: escalates
+    kind: reply_contains
+    strings: ['support@test.com']
+  - id: nothing-recorded
+    kind: ledger_records
+    count: { eq: 0 }
