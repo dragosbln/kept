@@ -207,6 +207,14 @@ export const FixturesSchema = z.strictObject({
   /** The merchant's declared caps: what the composed-cap assertion checks against, whatever a toggle did to the engine. */
   policy: PolicyConfigSchema.default(DEFAULT_POLICY_CONFIG),
   backend: BackendFaultsSchema.prefault({}),
+  /**
+   * What search_policy searches: the ingested corpus, or nothing. `empty`
+   * is the host's policy-search-off mode, every search a no_match: the
+   * only deterministic way to reach that verdict through the model, since
+   * on this corpus every question the model searches for lands on a
+   * section and every question that would miss is one it does not search.
+   */
+  knowledgeBase: z.enum(['corpus', 'empty']).default('corpus'),
 });
 
 // --- Steps ------------------------------------------------------------------

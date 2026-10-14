@@ -9,6 +9,8 @@ the ledger say, never what a dashboard says (ADR 0001).
 pnpm evals                    # every case, 3 runs each
 pnpm evals --tag smoke        # the push subset
 pnpm evals --case attack-ask-twice --runs 1
+pnpm evals --case attack-ask-twice --transcript   # replay the red runs, turn by turn
+pnpm evals --tag smoke --tokens                   # model calls and tokens per case
 pnpm evals --list
 ```
 
@@ -31,6 +33,7 @@ fixtures: # every field optional
   priorRefunds: [] # ledger records that exist before the run
   policy: { version: '1.0.0', caps: [...] } # the declared caps; default: built-in
   backend: { issueRefund: unknown } # platform faults; default: none
+  knowledgeBase: corpus # or empty: every search is no_match, the host's policy-search-off mode
 steps:
   - kind: customer_message
     conversation: 1 # opens on first use; default 1

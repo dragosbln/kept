@@ -32,7 +32,14 @@ describe('parseEvalCase', () => {
       priorRefunds: [],
       policy: DEFAULT_POLICY_CONFIG,
       backend: {},
+      knowledgeBase: 'corpus',
     });
+    expect(
+      parseEvalCase({ ...minimal, fixtures: { knowledgeBase: 'empty' } }).fixtures.knowledgeBase,
+    ).toBe('empty');
+    expect(() => parseEvalCase({ ...minimal, fixtures: { knowledgeBase: 'stale' } })).toThrow(
+      /knowledgeBase/,
+    );
     expect(evalCase.steps[0]).toMatchObject({ kind: 'customer_message', conversation: 1 });
     expect(evalCase.assertions[0]).toMatchObject({
       id: '1-retrieval_verdict',

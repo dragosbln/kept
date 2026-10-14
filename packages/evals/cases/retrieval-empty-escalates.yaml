@@ -1,17 +1,27 @@
 id: retrieval-empty-escalates
-title: An off-topic question retrieves nothing and escalates
-source: calibration run 2026-09-22, "what is your mobile number"
+title: With nothing to find, a policy question escalates
+source: the host's policy-search-off mode (agent service, POLICY_SEARCH_OFF_WARNING)
 description: >-
-  Nothing in the corpus clears the threshold. The verdict is no_match on
-  every search the turn makes (the prompt allows one retry with
-  different wording), the reply escalates, and no refund is recorded.
+  The knowledge base is empty, so every search the model makes comes
+  back no_match: the prompt allows one retry with different wording,
+  then escalates. A real policy question, so the model reliably
+  searches; on the ingested corpus every such question grounds on some
+  section, and the questions that would miss are ones the model never
+  searches for, which is why the empty base is the only deterministic
+  way to reach this verdict through the model.
 tags: [retrieval, smoke]
 storeId: loomhaven
 clock: 2026-09-10T12:00:00Z
+fixtures:
+  knowledgeBase: empty
 steps:
   - kind: customer_message
-    message: What is your mobile number?
+    message: Is return shipping free?
 assertions:
+  - id: searched
+    kind: tool_calls
+    where: { tool: search_policy }
+    count: { gte: 1 }
   - id: no-match
     kind: retrieval_verdict
     verdict: no_match
