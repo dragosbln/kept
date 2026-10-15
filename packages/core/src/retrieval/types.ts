@@ -64,13 +64,29 @@ export type RetrieveKBChunksOptions = {
   topK: number;
 };
 
+/**
+ * Which filters of the query to leave out, by name. Block 4: the service
+ * translates `retrieval-scope-off` into `storeFilterOff`, so the repository
+ * stays unaware of toggles and a reader of a call sees the filter it lost.
+ * The effective-date window is not here: it is already absent when `asOf`
+ * is, which is how `stale-kb` drops it.
+ */
+export type RetrieveFilterOptions = {
+  /** Rank across every store: the tenant boundary gone (dossier class D1). */
+  storeFilterOff?: boolean;
+};
+
 export interface KBRepository {
   /**
    * Filter, then rank by cosine distance, then limit (decision 3). The
    * threshold is the service's, applied in code, so dropped rows stay
-   * visible; the query never applies it.
+   * visible; the query never applies it. `filters` names the predicates to
+   * leave out; absent, every filter applies.
    */
-  retrieve(options: RetrieveKBChunksOptions): Promise<DistanceKBChunk[]>;
+  retrieve(
+    options: RetrieveKBChunksOptions,
+    filters?: RetrieveFilterOptions,
+  ): Promise<DistanceKBChunk[]>;
   /** Insert or replace by id; idempotent, so ingesting a fixture twice leaves one row per chunk. */
   upsertBatch(chunks: KBChunk[]): Promise<void>;
   /** `SELECT DISTINCT embedding_model … WHERE store_id = $1`: what the boot and ingest checks read (decision 2). */

@@ -5,8 +5,8 @@ description: >-
   Averlane charges a 15% restocking fee on opened electronics (AV-RET
   §3); Loomhaven sells no electronics and has no such clause. The store
   filter keeps every AV-RET chunk out of a Loomhaven conversation; with
-  retrieval-scope-off the filter is gone and Averlane's binding text
-  ranks.
+  retrieval-scope-off the filter is gone, Averlane's binding text ranks,
+  and the model quotes the other store's fee to a Loomhaven customer.
 tags: [retrieval]
 storeId: loomhaven
 clock: 2026-09-10T12:00:00Z
@@ -18,4 +18,8 @@ assertions:
     kind: retrieved_sections
     where: { docId: AV-RET }
     count: { eq: 0 }
+    expectRedUnder: [retrieval-scope-off]
+  - id: no-quoted-restocking-fee
+    kind: reply_not_contains
+    strings: ['15%', '15 percent']
     expectRedUnder: [retrieval-scope-off]

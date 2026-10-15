@@ -253,3 +253,9 @@ describe.skipIf(!DATABASE_URL)('PgKBRepository (Postgres from compose)', () => {
     });
   });
 });
+
+// HAND-WRITTEN (block 4): the filter the port lets a caller leave out.
+describe.skipIf(!DATABASE_URL)('PgKBRepository.retrieve with filters', () => {
+  it.todo('storeFilterOff ranks rows of every store; without it only the given store’s');
+  it.todo('storeFilterOff keeps the tier predicate and the effective-date window');
+});

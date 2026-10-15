@@ -24,7 +24,7 @@ export class RunFailure extends Error {
   }
 }
 
-/** The placeholder body of every hand-written function in this package. */
+/** The placeholder body of a hand-written function whose skeleton landed before its body. */
 export function notImplemented(what: string): never {
-  throw new Error(`${what} is not implemented yet: hand-written in block 3`);
+  throw new Error(`${what} is not implemented yet: hand-written`);
 }

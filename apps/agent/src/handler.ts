@@ -31,6 +31,7 @@ import {
   createDb,
   createToolRegistry,
   makeDemoOrders,
+  parseFaultToggles,
   runTurn,
   toModelToolRegistry,
 } from '@kept-hq/core';
@@ -42,6 +43,7 @@ import type {
   EmbedResponse,
   EmbeddingClient,
   EmbeddingClientConfig,
+  FaultToggle,
   InboxActions,
   KBRepository,
   Message,
@@ -110,11 +112,12 @@ export type AgentServiceConfig = {
   /** The embedding client for policy search; OpenAI whichever provider answers the customer. */
   embedding?: { apiKey: string; model: string };
   /**
-   * The fault toggles this process runs under, stamped on every trace. The
-   * eval runner sets them per suite; block 4 reads them from the environment
-   * and makes them do something. Absent means none.
+   * The fault toggles this process runs under (KEPT_FAULT_TOGGLES), handed
+   * to the engine, the retrieval service and every turn, and stamped on
+   * every trace. The eval runner sets them per matrix job. Absent means
+   * none, which is the only setting a merchant should ever run with.
    */
-  faultToggles?: readonly string[];
+  faultToggles?: readonly FaultToggle[];
 };
 
 /**
@@ -252,6 +255,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv): AgentServiceConfig {
   const defaults = PROVIDER_DEFAULTS[provider];
   const reasoningEffort = provider === 'openai' ? reasoningEffortFromEnv(env, defaults) : undefined;
   const policy = policyFromEnv(env);
+  const faultToggles = parseFaultToggles(env['KEPT_FAULT_TOGGLES']);
   const databaseUrl = env['DATABASE_URL']?.trim();
   const embeddingKey = env['OPENAI_API_KEY']?.trim();
   return {
@@ -273,6 +277,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv): AgentServiceConfig {
     apiKey,
     ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
     ...(policy === undefined ? {} : { policy }),
+    ...(faultToggles.length === 0 ? {} : { faultToggles }),
     ...(langfusePublicKey && langfuseSecretKey
       ? {
           langfuse: {
@@ -364,7 +369,9 @@ async function buildRetrieval(config: AgentServiceConfig): Promise<RetrievalHand
   if (!config.databaseUrl) {
     console.warn(POLICY_SEARCH_OFF_WARNING);
     return {
-      service: new RetrievalService(new NoEmbeddingClient(), new EmptyKBRepository()),
+      service: new RetrievalService(new NoEmbeddingClient(), new EmptyKBRepository(), undefined, {
+        faultToggles: config.faultToggles ?? [],
+      }),
       close: async () => {},
     };
   }
@@ -373,6 +380,7 @@ async function buildRetrieval(config: AgentServiceConfig): Promise<RetrievalHand
       'DATABASE_URL is set but OPENAI_API_KEY is not — policy search embeds questions with OpenAI (text-embedding-3-small) whichever provider answers the customer; set the key, or unset DATABASE_URL to run without policy search',
     );
   }
+  const options = { faultToggles: config.faultToggles ?? [] };
   const handle = createDb(config.databaseUrl);
   const kbRepo = new PgKBRepository(handle.db);
   const embeddingClient = new OpenAIEmbeddingClient(
@@ -388,7 +396,10 @@ async function buildRetrieval(config: AgentServiceConfig): Promise<RetrievalHand
     await handle.close();
     throw error;
   }
-  return { service: new RetrievalService(embeddingClient, kbRepo), close: handle.close };
+  return {
+    service: new RetrievalService(embeddingClient, kbRepo, undefined, options),
+    close: handle.close,
+  };
 }
 
 // --- The service ------------------------------------------------------------
@@ -446,6 +457,13 @@ export async function createAgentService(
     config.promptVersion,
   );
   const now = deps.now ?? Date.now;
+  const faultToggles = config.faultToggles ?? [];
+  if (faultToggles.length > 0) {
+    // Loud on purpose: a fault toggle in a merchant's process is an incident.
+    console.warn(
+      `agent service: FAULT TOGGLES ON (${faultToggles.join(', ')}) — the trust layer is deliberately broken for an eval; never run customers against this`,
+    );
+  }
   const backend = deps.backend ?? getBackend(config.backendKind, now);
   // One ledger per process, shared by every conversation: per-customer and
   // per-day caps, and the cross-conversation attacks, all depend on that.
@@ -454,7 +472,8 @@ export async function createAgentService(
   // one and the built-in defaults otherwise; validated at boot, its hash
   // stamped on every trace and every decision.
   const policyEngine =
-    deps.policyEngine ?? new PolicyEngine(config.policy?.config ?? DEFAULT_POLICY_CONFIG, { now });
+    deps.policyEngine ??
+    new PolicyEngine(config.policy?.config ?? DEFAULT_POLICY_CONFIG, { now, faultToggles });
   const retrieval: RetrievalHandle = deps.retrieval
     ? { service: deps.retrieval, close: async () => {} }
     : await buildRetrieval(config);
@@ -499,7 +518,7 @@ export async function createAgentService(
         promptHash: promptData.hash,
         policyConfigHash: policyEngine.configHash,
         backendKind: config.backendKind,
-        faultToggles: [...(config.faultToggles ?? [])],
+        faultToggles: [...faultToggles],
       });
 
       // Taken over: the customer's message is kept for the human, the
@@ -529,6 +548,7 @@ export async function createAgentService(
           // production and the case's clock under the eval runner (deps.now).
           storeId: config.storeId,
           asOf: now(),
+          faultToggles,
           trace,
         });
 

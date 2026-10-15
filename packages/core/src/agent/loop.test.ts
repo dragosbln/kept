@@ -610,3 +610,12 @@ describe('runTurn', () => {
     expect(toolSpan).toMatchObject({ status: 'completed', resultState: 'unknown' });
   });
 });
+
+// HAND-WRITTEN (block 4): what the loop does with the swallow. The span and
+// the tool-result message both see the rewritten call, never the truth.
+describe('runTurn under swallow-tool-errors', () => {
+  it.todo(
+    'an unknown tool result ends its tool_execution span with resultState ok and reaches the model with status ok',
+  );
+  it.todo('without the toggle the span and the message carry the executor’s state unchanged');
+});

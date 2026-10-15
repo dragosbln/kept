@@ -62,7 +62,14 @@ export class PgKBRepository implements KBRepository {
    * 'drizzle-orm' is the `<=>` operator; select it as `distance` beside the
    * columns, leave the embedding out of the select, map the rest with
    * `fromRow`. Keep each predicate its own expression: block 4 drops them
-   * by name (`retrieval-scope-off` the first two, `stale-KB` the dates).
+   * by name.
+   *
+   * HAND-WRITTEN (block 4): add the port's `filters` parameter and leave
+   * `inStore` out when `filters.storeFilterOff` is set (`retrieval-scope-off`;
+   * the tier predicate stays, a design delta: no case needs it dropped and
+   * dropping it would let the undated informational query return expired
+   * binding sections, which is `stale-kb`'s failure, not this one's). The
+   * dates need nothing new: `inForce` is already absent when `asOf` is.
    */
   async retrieve(options: RetrieveKBChunksOptions): Promise<DistanceKBChunk[]> {
     const inStore = eq(kbChunks.storeId, options.storeId);

@@ -129,3 +129,15 @@ describe('RetrievalService.retrieve', () => {
     });
   });
 });
+
+// HAND-WRITTEN (block 4): the two retrieval toggles, pinned on what the
+// service asks the repository, since the SQL is pg/kb-repository.test.ts's.
+describe('RetrievalService.retrieve under fault toggles', () => {
+  it.todo('no toggle: both calls carry the store and no filters, the binding call carries asOf');
+  it.todo('retrieval-scope-off: both repository calls carry storeFilterOff');
+  it.todo('stale-kb: the binding call is sent without asOf; the informational call is unchanged');
+  it.todo('an unrelated toggle changes nothing about either call');
+  it.todo(
+    'under retrieval-scope-off a binding chunk of another store still yields a grounded verdict',
+  );
+});

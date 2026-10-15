@@ -5,6 +5,7 @@ import type {
   ToolRegistry,
   ToolResult,
 } from '../tools/types.js';
+import type { FaultToggle } from '../fault-toggles.js';
 import type { ModelClient } from '../model/client.js';
 import type { Trace } from '../tracing/trace.js';
 import type { Message, ToolArgs } from '../messages.js';
@@ -87,6 +88,12 @@ export type RunTurnParams = {
   storeId: string;
   /** The turn's clock, epoch ms; passed to every tool of the turn (ToolExecuteContext.asOf). */
   asOf: number;
+  /**
+   * The fault toggles this process runs under. The loop consumes one,
+   * `swallow-tool-errors`, between the executor and the span; the rest
+   * belong to the engine and the retrieval service. Absent means none.
+   */
+  faultToggles?: readonly FaultToggle[];
   limits?: Partial<TurnLimits>;
   logger?: TurnLogger;
 };

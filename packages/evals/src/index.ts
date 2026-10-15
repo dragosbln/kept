@@ -1,9 +1,10 @@
 // @kept-hq/evals — the YAML case format, the runner and the assertions.
 //
 // Hand-written (block 3): the run loop, the observation, the stability rule
-// and every assertion type (run/runner.ts, assertions/registry.ts). The
-// rest is plumbing: the format and its loader, the fixture builder, the
-// reporter, the command in scripts/evals.ts. The case format is a product surface, not an implementation
+// and every assertion type (run/runner.ts, assertions/registry.ts); (block
+// 4): the matrix fold (matrix/matrix.ts). The rest is plumbing: the format
+// and its loader, the fixture builder, the reporter, the command in
+// scripts/evals.ts. The case format is a product surface, not an implementation
 // detail; it is documented in README.md.
 
 export {
@@ -84,4 +85,18 @@ export {
 export { ASSERTIONS, evaluateAssertion } from './assertions/registry.js';
 export type { AssertionFn, AssertionRegistry } from './assertions/registry.js';
 
-export { assertionFailureCounts, exitCodeFor, formatSuiteReport } from './report/reporter.js';
+export {
+  assertionFailureCounts,
+  exitCodeFor,
+  exitCodeForMatrix,
+  formatMatrixReport,
+  formatSuiteReport,
+} from './report/reporter.js';
+
+export { faultMatrixResult, matrixEntryVerdict } from './matrix/matrix.js';
+export type {
+  MatrixEntry,
+  MatrixEntryVerdict,
+  MatrixExpectation,
+  MatrixResult,
+} from './matrix/matrix.js';

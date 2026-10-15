@@ -12,6 +12,7 @@ export type {
   RetrievalResult,
   RetrievalScope,
   RetrievalVerdict,
+  RetrieveFilterOptions,
   RetrieveKBChunksOptions,
   RetrievedChunk,
 } from './types.js';
@@ -28,7 +29,7 @@ export { FakeEmbeddingClient, bagOfWordsVector } from './embedding/fake.js';
 export type { FakeEmbeddingOptions } from './embedding/fake.js';
 export { chunkDocument, embeddingInputFor } from './chunker.js';
 export { RetrievalError, RetrievalService } from './service.js';
-export type { RetrievalErrorKind } from './service.js';
+export type { RetrievalErrorKind, RetrievalServiceOptions } from './service.js';
 export {
   EmbeddingModelCheckError,
   assertStoreEmbeddingModel,

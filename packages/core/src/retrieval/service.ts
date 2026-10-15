@@ -1,5 +1,6 @@
 import { DEFAULT_RETRIEVAL_CONFIG, type RetrievalServiceConfig } from './config.js';
 import type { EmbeddingClient } from './embedding/client.js';
+import { faultToggleNotImplemented, type FaultToggle } from '../fault-toggles.js';
 import type {
   KBRepository,
   RetrievalResult,
@@ -7,6 +8,16 @@ import type {
   RetrievalVerdict,
   RetrievedChunk,
 } from './types.js';
+
+export type RetrievalServiceOptions = {
+  /**
+   * The fault toggles this process runs under. Two concern the query:
+   * `retrieval-scope-off` drops the store filter from both repository
+   * calls, `stale-kb` drops the effective-date window from the binding
+   * one. Absent means none.
+   */
+  faultToggles?: readonly FaultToggle[];
+};
 
 export type RetrievalErrorKind = 'embedding_failed' | 'repository_failed';
 
@@ -36,15 +47,18 @@ export class RetrievalService {
   private readonly embeddingClient: EmbeddingClient;
   private readonly kbRepo: KBRepository;
   private readonly serviceConfig: RetrievalServiceConfig;
+  private readonly faultToggles: readonly FaultToggle[];
 
   constructor(
     embeddingClient: EmbeddingClient,
     kbRepo: KBRepository,
     config: RetrievalServiceConfig = DEFAULT_RETRIEVAL_CONFIG,
+    options: RetrievalServiceOptions = {},
   ) {
     this.embeddingClient = embeddingClient;
     this.kbRepo = kbRepo;
     this.serviceConfig = config;
+    this.faultToggles = options.faultToggles ?? [];
   }
 
   /** Stamped on the retrieval span by the tool, so a trace says which thresholds ranked it. */
@@ -80,6 +94,19 @@ export class RetrievalService {
    * three collaborators; nothing else is needed.
    */
   async retrieve(question: string, scope: RetrievalScope): Promise<RetrievalResult> {
+    // HAND-WRITTEN (block 4): the two retrieval toggles, applied at the two
+    // repository calls below. `retrieval-scope-off`: both calls carry
+    // `{ storeFilterOff: true }`. `stale-kb`: the binding call is sent
+    // without `asOf`, which is the same query the informational call
+    // already runs, so expired and future binding sections rank. The
+    // verdict stays truthful either way: it is derived from the tiers of
+    // the chunks that cleared, not from which query returned them
+    // (block 2, decision 6). Until the bodies land, a toggle refuses here.
+    if (this.faultToggles.includes('retrieval-scope-off')) {
+      faultToggleNotImplemented('retrieval-scope-off');
+    }
+    if (this.faultToggles.includes('stale-kb')) faultToggleNotImplemented('stale-kb');
+
     const embedResponse = await this.embeddingClient.embed([question]);
     if (embedResponse.type === 'transport_error') {
       throw new RetrievalError(

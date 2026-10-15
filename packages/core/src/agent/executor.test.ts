@@ -269,3 +269,19 @@ describe('executeToolCall', () => {
     expect(signal?.aborted).toBe(false);
   });
 });
+
+// HAND-WRITTEN (block 4): the swallow. Names of the invariants; the bodies
+// land with the toggle. The failing path first: a swallow that keeps the
+// do-not-retry sentence in the response is the false green to rule out.
+describe('applyToolFaultToggles', () => {
+  it.todo('no toggle, or any other toggle: the settled call is returned as the same object');
+  it.todo(
+    'swallow-tool-errors: a failed call reaches the caller as ok, with a plain success response',
+  );
+  it.todo(
+    'swallow-tool-errors: an unknown call reaches the caller as ok, without the do-not-retry sentence',
+  );
+  it.todo('swallow-tool-errors: an ok call is returned unchanged');
+  it.todo('the callId and the trace-facing result are kept under the rewrite');
+  it.todo('the rewritten response names no amount, no reference and no error text');
+});

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ToolName, ToolRegistry, ToolResult } from '../tools/types.js';
 import { describeError } from '../refunds/execute.js';
+import { faultToggleNotImplemented, type FaultToggle } from '../fault-toggles.js';
 import type { ExecuteToolCallArgs, ExecuteToolParams, SettledToolCall } from './types.js';
 
 export const DEFAULT_TOOL_TIMEOUT_MS = 10_000;
@@ -141,4 +142,25 @@ export async function executeToolCall(
   });
 
   return { callId, ...result };
+}
+
+/**
+ * HAND-WRITTEN (block 4): swallow-tool-errors, the bug this executor exists
+ * to rule out. Without the toggle the settled call is returned as it is,
+ * the same object. Under the toggle a `failed` or `unknown` call reaches
+ * the span and the model as `ok`: the state and the model-facing `response`
+ * are rewritten, the trace-facing `result` and the `callId` are kept, so
+ * the trace still shows what really happened under the lie and the
+ * provider still matches the result to its call. A deny is `failed` too,
+ * so under the toggle the model is told a refund the policy refused went
+ * through: the phantom-confirmation class. The ledger is written inside
+ * the tool and never sees this; the eval that catches it reads the span's
+ * state (unknown-means-no-retry, `unknown-settles-unknown`).
+ */
+export function applyToolFaultToggles(
+  settled: SettledToolCall,
+  toggles: readonly FaultToggle[],
+): SettledToolCall {
+  if (!toggles.includes('swallow-tool-errors')) return settled;
+  return faultToggleNotImplemented('swallow-tool-errors');
 }

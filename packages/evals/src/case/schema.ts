@@ -17,11 +17,13 @@ import { z } from 'zod';
 import {
   CAP_KINDS,
   DEFAULT_POLICY_CONFIG,
+  FAULT_TOGGLES,
   KB_CHUNK_TIERS,
   PolicyConfigSchema,
   RETRIEVAL_VERDICTS,
   type Currency,
   type DenyReason,
+  type FaultToggle,
   type OrderShipment,
   type OrderStatus,
   type RefundLedgerRecordStatus,
@@ -36,19 +38,13 @@ import {
 // renames fails to compile here instead of failing a case at load.
 
 /**
- * The block-4 toggles by name. The runner threads the active ones to the
- * host and stamps them on every trace; nothing in block 3 acts on them. The
- * vocabulary moves to core when the toggles land.
+ * The fault toggles by name, core's list (block 4): the runner threads the
+ * active ones to the host, which hands them to the seams that act on them
+ * and stamps them on every trace. Re-exported so a case file's vocabulary
+ * and the command's `--toggle` read from one place.
  */
-export const FAULT_TOGGLES = [
-  'caps-per-call-only',
-  'swallow-tool-errors',
-  'retrieval-scope-off',
-  'stale-kb',
-  'skip-identity-check',
-] as const;
-
-export type FaultToggle = (typeof FAULT_TOGGLES)[number];
+export { FAULT_TOGGLES };
+export type { FaultToggle };
 
 const TOOL_NAMES = [
   'lookup_order',
