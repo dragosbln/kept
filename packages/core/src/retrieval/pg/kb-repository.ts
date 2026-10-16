@@ -1,5 +1,11 @@
 import { and, cosineDistance, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
-import type { DistanceKBChunk, KBChunk, KBRepository, RetrieveKBChunksOptions } from '../types.js';
+import type {
+  DistanceKBChunk,
+  KBChunk,
+  KBRepository,
+  RetrieveFilterOptions,
+  RetrieveKBChunksOptions,
+} from '../types.js';
 import type { KeptDb } from './db.js';
 import { kbChunks, type KbChunkInsert, type KbChunkRow } from './schema.js';
 
@@ -62,10 +68,20 @@ export class PgKBRepository implements KBRepository {
    * 'drizzle-orm' is the `<=>` operator; select it as `distance` beside the
    * columns, leave the embedding out of the select, map the rest with
    * `fromRow`. Keep each predicate its own expression: block 4 drops them
-   * by name (`retrieval-scope-off` the first two, `stale-KB` the dates).
+   * by name.
+   *
+   * Block 4: `filters.storeFilterOff` leaves `inStore` out
+   * (`retrieval-scope-off`). The tier predicate stays, a design delta: no
+   * case needs it dropped, and dropping it would let the undated
+   * informational query return expired binding sections, which is
+   * `stale-kb`'s failure, not this one's. The dates need nothing new:
+   * `inForce` is already absent when `asOf` is.
    */
-  async retrieve(options: RetrieveKBChunksOptions): Promise<DistanceKBChunk[]> {
-    const inStore = eq(kbChunks.storeId, options.storeId);
+  async retrieve(
+    options: RetrieveKBChunksOptions,
+    filters?: RetrieveFilterOptions,
+  ): Promise<DistanceKBChunk[]> {
+    const inStore = !filters?.storeFilterOff ? eq(kbChunks.storeId, options.storeId) : undefined;
     const inTiers = inArray(kbChunks.tier, options.tiers);
     const inForce =
       options.asOf !== undefined

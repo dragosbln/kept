@@ -1,0 +1,63 @@
+# The push subset of the eval suite, faults off: the cases tagged `smoke`,
+# three runs each, against Postgres alone (ADR 0001). A few minutes and a
+# handful of model calls per run. Forks get no secrets, so pull requests
+# from them are skipped rather than failed.
+name: evals smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evals-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: kept
+          POSTGRES_PASSWORD: kept
+          POSTGRES_DB: kept
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U kept -d kept"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://kept:kept@localhost:5432/kept
+      # One key answers customers and embeds questions. Model and prompt are
+      # pinned here on purpose: the suite is the reference, it must not drift.
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      KEPT_PROVIDER: openai
+      KEPT_MODEL: gpt-5.6-luna
+      KEPT_PROMPT_VERSION: '1.2.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Migrate and ingest the policy corpus
+        run: pnpm db:migrate && pnpm kb:ingest
+      - name: Run the smoke subset
+        run: |
+          set -o pipefail
+          pnpm evals --tag smoke --json reports/smoke.json | tee evals.log
+      - name: Report
+        if: always()
+        run: |
+          { echo '```'; cat evals.log 2>/dev/null || echo 'no report: the run did not reach the suite'; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evals-report-smoke
+          path: reports/smoke.json
+          if-no-files-found: ignore

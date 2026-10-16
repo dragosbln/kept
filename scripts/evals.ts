@@ -9,7 +9,7 @@
 //   pnpm evals --case attack-ask-twice --runs 1
 //   pnpm evals --case attack-ask-twice --transcript   # replay the red runs
 //   pnpm evals --tag smoke --tokens         # model calls and tokens per case
-//   pnpm evals --toggle stale-kb            # block 4: one matrix job
+//   pnpm evals --toggle stale-kb            # one matrix job: listed assertions must go red, the rest stay green
 //   pnpm evals --list
 //
 // Needs a model key and Postgres with the corpus ingested: the retrieval
@@ -49,6 +49,9 @@ import type {
 import {
   FAULT_TOGGLES,
   exitCodeFor,
+  exitCodeForMatrix,
+  faultMatrixResult,
+  formatMatrixReport,
   formatSuiteReport,
   loadEvalCases,
   loadQuarantine,
@@ -130,7 +133,7 @@ function createFactory(
       world.backend,
     );
     const ledger = new InMemoryRefundLedger([...world.priorRefunds], now);
-    const policyEngine = new PolicyEngine(world.policy, { now });
+    const policyEngine = new PolicyEngine(world.policy, { now, faultToggles: world.faultToggles });
     // An empty knowledge base is a service over no rows: every search is a
     // no_match, the host's policy-search-off path without the boot check.
     const retrieval =
@@ -295,6 +298,8 @@ function usage(): never {
   --tag, -t    run cases carrying this tag; repeatable, any match ("smoke" is the push subset)
   --runs       repetitions per case (default 3, the stability rule)
   --toggle     a fault toggle to run under; repeatable. One of: ${FAULT_TOGGLES.join(', ')}
+               The report then ends with the matrix: assertions listing the toggle must go red in at least one run,
+               every other one must stay green, and the exit code is the matrix's, not the suite's
   --json       also write the report as JSON to this path
   --transcript after the report, replay every run that did not pass: customer, tools, policy, retrieval, reply
   --transcript-all
@@ -386,7 +391,14 @@ async function main(): Promise<void> {
   });
   await langfuse?.flush();
 
-  console.log(formatSuiteReport(report, cases));
+  console.log(formatSuiteReport(report, cases, { gating: faultToggles.length === 0 }));
+
+  // Under a toggle the suite's reds are the point; the verdict is the matrix's.
+  const matrix =
+    faultToggles.length > 0 ? faultMatrixResult(faultToggles, cases, report) : undefined;
+  if (matrix) {
+    console.log(`\n${formatMatrixReport(matrix)}`);
+  }
 
   const perCase = report.cases.map((outcome) => ({
     caseId: outcome.caseId,
@@ -418,6 +430,7 @@ async function main(): Promise<void> {
           promptVersion: config.promptVersion,
           ...(values.tokens ? { usage: perCase } : {}),
           ...report,
+          ...(matrix ? { matrix } : {}),
         },
         null,
         2,
@@ -426,7 +439,7 @@ async function main(): Promise<void> {
     console.log(`report written to ${path.relative(REPO_ROOT, file)}`);
   }
 
-  process.exitCode = exitCodeFor(report);
+  process.exitCode = matrix ? exitCodeForMatrix(matrix) : exitCodeFor(report);
 }
 
 main().catch((error: unknown) => {

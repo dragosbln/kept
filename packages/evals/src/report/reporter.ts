@@ -3,6 +3,7 @@
 // can be opened in Langfuse by session without re-running anything.
 
 import type { EvalCase } from '../case/schema.js';
+import type { MatrixEntry, MatrixResult } from '../matrix/matrix.js';
 import type { CaseOutcome, RunOutcome, SuiteReport } from '../run/types.js';
 
 /** Per assertion id, in how many runs it failed. Errored runs count for nothing. */
@@ -85,7 +86,20 @@ function describeOutcome(outcome: CaseOutcome, evalCase: EvalCase | undefined): 
   return lines;
 }
 
-export function formatSuiteReport(report: SuiteReport, cases: readonly EvalCase[] = []): string {
+export type SuiteReportOptions = {
+  /**
+   * Whether the suite's verdicts decide the job. Under a fault toggle they
+   * do not: reds are the point and the matrix decides, so the trailing line
+   * says so instead of printing an exit code nobody acts on. Default true.
+   */
+  gating?: boolean;
+};
+
+export function formatSuiteReport(
+  report: SuiteReport,
+  cases: readonly EvalCase[] = [],
+  options: SuiteReportOptions = {},
+): string {
   const byId = new Map(cases.map((evalCase) => [evalCase.id, evalCase]));
   const tally = { passed: 0, failed: 0, flaky: 0, error: 0, quarantined: 0 };
   for (const outcome of report.cases) {
@@ -101,5 +115,86 @@ export function formatSuiteReport(report: SuiteReport, cases: readonly EvalCase[
   const body = report.cases.flatMap((outcome) =>
     describeOutcome(outcome, byId.get(outcome.caseId)),
   );
-  return [header, ...body, summary, `exit ${exitCodeFor(report)}`].join('\n');
+  const footer =
+    options.gating === false
+      ? 'not gating: reds are expected under a toggle, the matrix below decides'
+      : `exit ${exitCodeFor(report)}`;
+  return [header, ...body, summary, footer].join('\n');
+}
+
+// --- The matrix ---------------------------------------------------------------
+// One matrix job, as a human reads it: the mismatches with their counts,
+// the voids apart, quarantined entries marked, and the rule the exit code
+// follows: a mismatch fails the job, and so does a void outside quarantine,
+// because an errored case proved nothing either way (block 3, decision 2).
+
+/** Gating: on the quarantine list nothing counts. */
+function gating(entry: MatrixEntry): boolean {
+  return !entry.quarantined;
+}
+
+/** Non-zero when a gating entry is a mismatch or void. */
+export function exitCodeForMatrix(result: MatrixResult): 0 | 1 {
+  return result.entries.some((entry) => gating(entry) && entry.verdict !== 'as-expected') ? 1 : 0;
+}
+
+const MATRIX_MARK: Record<Exclude<MatrixEntry['verdict'], 'as-expected'>, string> = {
+  'missed-red': 'MISSED    ',
+  'unexpected-red': 'UNEXPECTED',
+  void: 'VOID      ',
+};
+
+function describeEntry(entry: MatrixEntry, toggles: string): string {
+  const where = `${entry.caseId} / ${entry.assertionId}`;
+  const count = `red in ${entry.redRuns}/${entry.runs}`;
+  const listed =
+    entry.expected === 'red' ? `listed under ${toggles}` : `not listed under ${toggles}`;
+  const suffix = entry.quarantined ? '  (quarantined, not gating)' : '';
+  switch (entry.verdict) {
+    case 'as-expected':
+      return `  ok         ${where}  ${count}, ${listed}${suffix}`;
+    case 'void':
+      return `  ${MATRIX_MARK.void} ${where}  no verdict: a run errored, ${listed}${suffix}`;
+    case 'missed-red':
+    case 'unexpected-red':
+      return `  ${MATRIX_MARK[entry.verdict]} ${where}  ${count}, ${listed}${suffix}`;
+  }
+}
+
+/**
+ * The matrix section of the report. Mismatches and voids are listed; the
+ * as-expected entries are a count, except the expected reds that did go
+ * red, which are listed too: they are what the screenshot is for.
+ */
+export function formatMatrixReport(result: MatrixResult): string {
+  const toggles = result.faultToggles.join(', ') || 'none';
+  const tally = { expected: 0, hit: 0, missed: 0, unexpected: 0, void: 0, quarantined: 0 };
+  const lines: string[] = [];
+  for (const entry of result.entries) {
+    if (entry.quarantined) tally.quarantined += 1;
+    switch (entry.verdict) {
+      case 'as-expected':
+        tally.expected += 1;
+        if (entry.expected === 'red') {
+          tally.hit += 1;
+          lines.push(describeEntry(entry, toggles));
+        }
+        break;
+      case 'missed-red':
+        tally.missed += 1;
+        lines.push(describeEntry(entry, toggles));
+        break;
+      case 'unexpected-red':
+        tally.unexpected += 1;
+        lines.push(describeEntry(entry, toggles));
+        break;
+      case 'void':
+        tally.void += 1;
+        lines.push(describeEntry(entry, toggles));
+        break;
+    }
+  }
+  const header = `matrix: toggles ${toggles}, ${result.entries.length} assertion(s)`;
+  const summary = `${tally.expected} as expected (${tally.hit} expected red${tally.hit === 1 ? '' : 's'} hit), ${tally.missed} missed red, ${tally.unexpected} unexpected red, ${tally.void} void, ${tally.quarantined} quarantined`;
+  return [header, ...lines, summary, `exit ${exitCodeForMatrix(result)}`].join('\n');
 }

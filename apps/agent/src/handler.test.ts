@@ -192,3 +192,61 @@ describe('policy search at boot', () => {
     ).toBe('postgresql://x');
   });
 });
+
+describe('KEPT_FAULT_TOGGLES', () => {
+  const env = { OPENAI_API_KEY: 'o' };
+
+  it('unset or blank means no toggles, and the config carries none', () => {
+    expect(configFromEnv(env)).not.toHaveProperty('faultToggles');
+    expect(configFromEnv({ ...env, KEPT_FAULT_TOGGLES: ' ' })).not.toHaveProperty('faultToggles');
+  });
+
+  it('a comma-separated list is parsed into the typed names', () => {
+    expect(
+      configFromEnv({ ...env, KEPT_FAULT_TOGGLES: 'stale-kb, caps-per-call-only' }),
+    ).toMatchObject({ faultToggles: ['stale-kb', 'caps-per-call-only'] });
+  });
+
+  it('an unknown name refuses the boot, naming the variable', () => {
+    expect(() => configFromEnv({ ...env, KEPT_FAULT_TOGGLES: 'swallow-errors' })).toThrow(
+      /KEPT_FAULT_TOGGLES: unknown fault toggle "swallow-errors"/,
+    );
+  });
+
+  it('the service warns loudly at boot when any toggle is on, once per toggle set per process, and stays quiet otherwise', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const deps = {
+      backend: new DemoBackend(makeDemoOrders(Date.now())),
+      ledger: new InMemoryRefundLedger(),
+      store: new InMemoryConversationStore(),
+      auditLog: new InMemoryAuditLog(),
+    };
+    const base: AgentServiceConfig = {
+      ...configFromEnv({ OPENAI_API_KEY: 'o' }),
+    };
+    try {
+      await createAgentService({ ...base, faultToggles: ['swallow-tool-errors'] }, deps);
+      expect(warn.mock.calls.map((call) => String(call[0]))).toContainEqual(
+        expect.stringContaining('FAULT TOGGLES ON (swallow-tool-errors)'),
+      );
+      warn.mockClear();
+      // The eval runner boots a service per run: the same set warns once per process.
+      await createAgentService({ ...base, faultToggles: ['swallow-tool-errors'] }, deps);
+      expect(warn.mock.calls.map((call) => String(call[0]))).not.toContainEqual(
+        expect.stringContaining('FAULT TOGGLES ON'),
+      );
+      // A different set is a different incident.
+      await createAgentService({ ...base, faultToggles: ['stale-kb'] }, deps);
+      expect(warn.mock.calls.map((call) => String(call[0]))).toContainEqual(
+        expect.stringContaining('FAULT TOGGLES ON (stale-kb)'),
+      );
+      warn.mockClear();
+      await createAgentService(base, deps);
+      expect(warn.mock.calls.map((call) => String(call[0]))).not.toContainEqual(
+        expect.stringContaining('FAULT TOGGLES ON'),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});

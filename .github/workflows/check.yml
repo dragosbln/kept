@@ -1,0 +1,41 @@
+# Everything the pre-commit hook runs, plus the Postgres tests the hook
+# skips: boundary (ADR 0001), lint, format, typecheck, unit tests. No model,
+# no Langfuse; the eval suite has its own workflows.
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: kept
+          POSTGRES_PASSWORD: kept
+          POSTGRES_DB: kept
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U kept -d kept"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      # Turns the repository tests on; the migration creates the extension.
+      DATABASE_URL: postgresql://kept:kept@localhost:5432/kept
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm check

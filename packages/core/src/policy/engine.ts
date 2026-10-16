@@ -25,7 +25,9 @@
 
 import type { SanitizedOrder } from '../backend/types.js';
 import type { LedgerQuery, RefundLedgerRecord } from '../refund-ledger/types.js';
+import type { FaultToggle } from '../fault-toggles.js';
 import { CAP_REGISTRY } from './caps.js';
+import { applyPolicyFaultToggles } from './fault-toggles.js';
 import {
   hashPolicyConfig,
   parsePolicyConfig,
@@ -50,8 +52,14 @@ import type {
 export type PolicyEngineOptions = {
   /** Injectable clock: window floors are computed from it, once per plan. */
   now?: () => number;
-  /** Per-rule switches over the defaults; the week-4 fault toggles flip these. */
+  /** Per-rule switches over the defaults, for tests and for a merchant who turns a rule off. */
   eligibilityRulesEnabled?: Partial<EligibilityRulesEnabled>;
+  /**
+   * The fault toggles this process runs under. Only `caps-per-call-only`
+   * concerns the engine: the config is filtered before it is hashed, so
+   * `config` and `configHash` are what the engine actually runs with.
+   */
+  faultToggles?: readonly FaultToggle[];
 };
 
 type CapRow = { cap: CapConfig; query: LedgerQuery; records: RefundLedgerRecord[] };
@@ -66,7 +74,7 @@ export class PolicyEngine {
 
   /** Throws on an invalid config: a boot-time failure, never a per-request one. */
   constructor(config: PolicyEngineConfig, options: PolicyEngineOptions = {}) {
-    this.config = parsePolicyConfig(config);
+    this.config = applyPolicyFaultToggles(parsePolicyConfig(config), options.faultToggles ?? []);
     this.configHash = hashPolicyConfig(this.config);
     this.now = options.now ?? Date.now;
     this.rulesEnabled = {

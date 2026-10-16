@@ -299,6 +299,27 @@ smoke test are deliberately **not** in the hook. They need the stack,
 they are slow by design, and a slow hook is one people learn to skip.
 They belong in CI.
 
+### Continuous integration
+
+Three workflows under [`.github/workflows/`](.github/workflows), all
+against Postgres alone, never Langfuse (ADR 0001):
+
+| Workflow       | When                                                                                                   | What                                                                                                  |
+| -------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `check`        | every push to `main`, every pull request                                                               | `pnpm check` with a pgvector container, so the repository tests run too                               |
+| `evals smoke`  | every push to `main`, pull requests from this repository                                               | the cases tagged `smoke`, faults off, three runs each                                                 |
+| `evals matrix` | on demand, weekly, and on a push to `main` that touches the prompt, the seams, the cases or the corpus | the whole suite faults off, then once per toggle; a grid of cases by toggles lands in the job summary |
+
+Each eval job boots an empty database, migrates, ingests the fixture
+corpus (71 chunks, one embedding batch) and runs. One repository secret,
+`OPENAI_API_KEY`, answers customers and embeds questions; use a key
+dedicated to CI with a spend cap. The model and the prompt version are
+pinned in the workflow files, because the suite is the reference and
+must not drift under a provider's default. A toggle job fails when the
+assertions that list it never go red, or when one that does not list it
+does; that rule is the matrix fold in `@kept-hq/evals`, and it is what
+makes a green matrix mean something.
+
 ## Architecture
 
 Annotated architecture notes are written by hand as each piece lands, and

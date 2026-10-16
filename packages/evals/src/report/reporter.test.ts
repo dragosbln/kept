@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import type { MatrixEntry, MatrixResult } from '../matrix/matrix.js';
 import type { CaseOutcome, RunOutcome, SuiteReport } from '../run/types.js';
-import { assertionFailureCounts, exitCodeFor, formatSuiteReport } from './reporter.js';
+import {
+  assertionFailureCounts,
+  exitCodeFor,
+  exitCodeForMatrix,
+  formatMatrixReport,
+  formatSuiteReport,
+} from './reporter.js';
 
 const passed = (id: string): RunOutcome => ({
   status: 'passed',
@@ -70,5 +77,101 @@ describe('formatSuiteReport', () => {
     expect(text).toContain('boot_failed: no database');
     expect(text).toContain('1 passed, 0 failed, 1 flaky, 1 error, 1 quarantined');
     expect(text.endsWith('exit 1')).toBe(true);
+  });
+
+  it('under a toggle the suite does not gate: the footer says so instead of an exit code', () => {
+    const red: CaseOutcome = {
+      caseId: 'red-case',
+      verdict: 'failed',
+      runs: [failed('cap', 'over')],
+      quarantined: false,
+    };
+    const text = formatSuiteReport(
+      { ...report([red]), config: { runs: 3, faultToggles: ['caps-per-call-only'] } },
+      [],
+      { gating: false },
+    );
+    expect(text).toContain('toggles: caps-per-call-only');
+    expect(
+      text.endsWith('not gating: reds are expected under a toggle, the matrix below decides'),
+    ).toBe(true);
+    expect(text).not.toMatch(/\nexit \d$/);
+  });
+});
+
+// The matrix section, over a literal MatrixResult: the fold itself is
+// matrix/matrix.test.ts's (hand-written, block 4).
+
+function entry(
+  overrides: Partial<MatrixEntry> & Pick<MatrixEntry, 'assertionId' | 'verdict'>,
+): MatrixEntry {
+  return {
+    caseId: 'case-a',
+    expected: overrides.verdict === 'missed-red' ? 'red' : 'green',
+    runs: 3,
+    redRuns: 0,
+    quarantined: false,
+    ...overrides,
+  };
+}
+
+function matrix(entries: MatrixEntry[]): MatrixResult {
+  return {
+    faultToggles: ['stale-kb'],
+    entries,
+    passed: !entries.some(
+      (e) => !e.quarantined && e.verdict !== 'void' && e.verdict !== 'as-expected',
+    ),
+  };
+}
+
+describe('exitCodeForMatrix', () => {
+  it('is 0 only when every gating entry is as expected; a void outside quarantine fails the job', () => {
+    const hit = entry({ assertionId: 'hit', verdict: 'as-expected', expected: 'red', redRuns: 2 });
+    expect(exitCodeForMatrix(matrix([hit]))).toBe(0);
+    expect(
+      exitCodeForMatrix(matrix([hit, entry({ assertionId: 'm', verdict: 'missed-red' })])),
+    ).toBe(1);
+    expect(
+      exitCodeForMatrix(
+        matrix([hit, entry({ assertionId: 'u', verdict: 'unexpected-red', redRuns: 1 })]),
+      ),
+    ).toBe(1);
+    expect(exitCodeForMatrix(matrix([hit, entry({ assertionId: 'v', verdict: 'void' })]))).toBe(1);
+    expect(
+      exitCodeForMatrix(
+        matrix([
+          hit,
+          entry({ assertionId: 'v', verdict: 'void', quarantined: true }),
+          entry({ assertionId: 'm', verdict: 'missed-red', quarantined: true }),
+        ]),
+      ),
+    ).toBe(0);
+  });
+});
+
+describe('formatMatrixReport', () => {
+  it('lists the expected reds that hit, every mismatch and void, marks quarantine, and tallies', () => {
+    const text = formatMatrixReport(
+      matrix([
+        entry({ assertionId: 'hit', verdict: 'as-expected', expected: 'red', redRuns: 3 }),
+        entry({ assertionId: 'quiet', verdict: 'as-expected' }),
+        entry({ assertionId: 'missed', verdict: 'missed-red' }),
+        entry({ caseId: 'case-b', assertionId: 'leak', verdict: 'unexpected-red', redRuns: 1 }),
+        entry({ caseId: 'case-c', assertionId: 'gone', verdict: 'void', quarantined: true }),
+      ]),
+    );
+    expect(text).toContain('matrix: toggles stale-kb, 5 assertion(s)');
+    expect(text).toContain('ok         case-a / hit  red in 3/3, listed under stale-kb');
+    expect(text).not.toContain('quiet');
+    expect(text).toContain('MISSED     case-a / missed  red in 0/3, listed under stale-kb');
+    expect(text).toContain('UNEXPECTED case-b / leak  red in 1/3, not listed under stale-kb');
+    expect(text).toContain(
+      'VOID       case-c / gone  no verdict: a run errored, not listed under stale-kb  (quarantined, not gating)',
+    );
+    expect(text).toContain(
+      '2 as expected (1 expected red hit), 1 missed red, 1 unexpected red, 1 void, 1 quarantined',
+    );
+    expect(text).toContain('exit 1');
   });
 });

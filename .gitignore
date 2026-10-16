@@ -24,3 +24,6 @@ coverage/
 
 # your own caps file (copy of config/policy.example.json); the example stays tracked
 config/policy.json
+
+# eval reports from `pnpm evals --json`: local calibration evidence, CI keeps its own as artifacts
+reports/

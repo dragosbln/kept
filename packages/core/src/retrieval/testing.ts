@@ -5,12 +5,20 @@
 
 import { FakeEmbeddingClient } from './embedding/fake.js';
 import { RetrievalService } from './service.js';
-import type { DistanceKBChunk, KBChunk, KBRepository, RetrieveKBChunksOptions } from './types.js';
+import type {
+  DistanceKBChunk,
+  KBChunk,
+  KBRepository,
+  RetrieveFilterOptions,
+  RetrieveKBChunksOptions,
+} from './types.js';
 
 export type ScriptedRows = Partial<Record<DistanceKBChunk['tier'], DistanceKBChunk[]>>;
 
 export class ScriptedKBRepository implements KBRepository {
   readonly calls: RetrieveKBChunksOptions[] = [];
+  /** The filters of each call, by the same index as `calls`; `{}` when none were passed. */
+  readonly filters: RetrieveFilterOptions[] = [];
   readonly upserted: KBChunk[] = [];
   /** When set, retrieve() rejects with it: the repository_failed path. */
   failWith: Error | undefined;
@@ -20,8 +28,12 @@ export class ScriptedKBRepository implements KBRepository {
     private readonly models: string[] = [],
   ) {}
 
-  async retrieve(options: RetrieveKBChunksOptions): Promise<DistanceKBChunk[]> {
+  async retrieve(
+    options: RetrieveKBChunksOptions,
+    filters: RetrieveFilterOptions = {},
+  ): Promise<DistanceKBChunk[]> {
     this.calls.push(options);
+    this.filters.push(filters);
     if (this.failWith) throw this.failWith;
     const matching = options.tiers.flatMap((tier) => this.rows[tier] ?? []);
     return matching.toSorted((a, b) => a.distance - b.distance).slice(0, options.topK);

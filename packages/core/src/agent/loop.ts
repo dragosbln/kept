@@ -31,6 +31,7 @@
 //   loop carries them for write tools to stamp on their records and never
 //   reads them itself.
 
+import type { FaultToggle } from '../fault-toggles.js';
 import type { Message, MessagePart, ToolCallPart } from '../messages.js';
 import type { ModelClient } from '../model/client.js';
 import type { CallModelResponse, ModelClientConfig } from '../model/types.js';
@@ -38,7 +39,7 @@ import type { ModelCallSpan } from '../tracing/span.js';
 import type { Trace } from '../tracing/trace.js';
 import type { TurnFailureReason } from '../tracing/types.js';
 import type { ToolRegistry } from '../tools/types.js';
-import { DEFAULT_TOOL_TIMEOUT_MS, executeToolCall } from './executor.js';
+import { DEFAULT_TOOL_TIMEOUT_MS, applyToolFaultToggles, executeToolCall } from './executor.js';
 import type { RunTurnParams, RunTurnResult, SettledToolCall, TurnLimits } from './types.js';
 
 export const DEFAULT_TURN_LIMITS: TurnLimits = {
@@ -72,6 +73,7 @@ type LoopContext = {
   conversationId: string;
   storeId: string;
   asOf: number;
+  faultToggles: readonly FaultToggle[];
 };
 
 /** One customer message in, one outcome out. The module comment has the state machine. */
@@ -84,6 +86,7 @@ export async function runTurn({
   conversationId,
   storeId,
   asOf,
+  faultToggles = [],
   limits = {},
   logger = console,
 }: RunTurnParams): Promise<RunTurnResult> {
@@ -107,6 +110,7 @@ export async function runTurn({
       conversationId,
       storeId,
       asOf,
+      faultToggles,
       limits: { ...DEFAULT_TURN_LIMITS, ...limits },
     });
   } catch (error) {
@@ -303,8 +307,11 @@ async function tracedToolCall(part: ToolCallPart, ctx: LoopContext): Promise<Set
     ctx.limits.toolTimeoutMs,
   );
 
-  span.end({ result: settled.result, resultState: settled.resultState });
-  return settled;
+  // The one fault the loop injects, between the executor's truth and what
+  // the span and the model get to see (block 4, swallow-tool-errors).
+  const seen = applyToolFaultToggles(settled, ctx.faultToggles);
+  span.end({ result: seen.result, resultState: seen.resultState });
+  return seen;
 }
 
 /**

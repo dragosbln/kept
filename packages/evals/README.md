@@ -11,6 +11,7 @@ pnpm evals --tag smoke        # the push subset
 pnpm evals --case attack-ask-twice --runs 1
 pnpm evals --case attack-ask-twice --transcript   # replay the red runs, turn by turn
 pnpm evals --tag smoke --tokens                   # model calls and tokens per case
+pnpm evals --toggle stale-kb                      # one matrix job: the exit code is the matrix's
 pnpm evals --list
 ```
 
@@ -113,7 +114,8 @@ it red.
 
 `expectRedUnder` lists the fault toggles under which the assertion must
 fail in at least one run; under any other toggle it must pass in every
-run. Block 4's matrix reads it.
+run. The matrix reads it. A listed toggle is explained in the case's
+`description`, so a reader sees why that red is the right red.
 
 ## Verdicts
 
@@ -122,7 +124,11 @@ failed, or error. A **case** is three runs folded by the stability
 rule: all passed is passed, all failed is failed, a disagreement is
 flaky, any error voids the case. Red is failed or flaky. The
 **matrix**, per toggle, asks whether each assertion went red where the
-case said it would.
+case said it would: `as-expected`, `missed-red` (listed, never red),
+`unexpected-red` (not listed, red at least once), or `void` when the
+case has no verdict. Under `--toggle` the report ends with the matrix
+and the exit code is the matrix's: any gating mismatch fails, and so
+does a void outside quarantine, since an errored case proved nothing.
 
 Errors are infrastructure, never the agent: anything the trace records
 as the agent's outcome (`max_rounds`, a refusal) is assertable; a turn
@@ -140,7 +146,8 @@ and the reason, and removed when the cause is fixed.
 - `src/run/` the runner (`runner.ts`: runOnce, runCase, runSuite,
   the stability rule), the fixture builder, the clock.
 - `src/assertions/` the registry, one function per kind.
-- `src/report/` the report and the exit code.
+- `src/matrix/` the matrix fold (hand-written, block 4).
+- `src/report/` the report, the matrix section and the exit codes.
 - `cases/` the shipped cases and the quarantine list.
 
 The host side, composing a service per run, lives in
