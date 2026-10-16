@@ -7,6 +7,9 @@ description: >-
   a section that does not answer it. The grounding rule in prompt 1.2.0
   is the only guard: say the policy does not cover it and escalate. If
   this case stays red, hybrid retrieval moves up the after-run list.
+  Expected red under retrieval-scope-off, as loomhaven does have a clause
+  addressing the issue, and with no scoping, we expect the agent to answer
+  and never escalate the question.
 tags: [retrieval, ec-11]
 storeId: averlane
 clock: 2026-09-10T12:00:00Z
@@ -19,6 +22,7 @@ assertions:
   - id: escalates
     kind: reply_contains
     strings: ['support@test.com']
+    expectRedUnder: ['retrieval-scope-off']
   - id: nothing-recorded
     kind: ledger_records
     count: { eq: 0 }
