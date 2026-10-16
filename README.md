@@ -23,6 +23,11 @@ Medusa-first adapter over a platform-agnostic core. TypeScript. MIT.
   state after a write whose outcome the backend never confirmed. The tool
   tells the model not to retry, and nothing does, until a human
   reconciles it.
+- **Identity gate.** Nothing about an order is disclosed, and no refund is
+  written, until the customer has named the order id and the email on it
+  and the verify tool has found them to agree. The check sits in the
+  order tools, not in the prompt, and a missing order and another
+  customer's order get the same refusal, so order ids cannot be probed.
 - **Policy engine with composed caps.** Per refund, per order, per
   customer over a trailing 30 days, and per store over a trailing
   24 hours. Every cap is evaluated on every request, inside the same
@@ -61,7 +66,10 @@ conversations live inside the agent process. A restart clears them. The
 demo says so at the end of every run. Postgres holds only the policy
 knowledge base, when policy search is on; persistence of these three
 arrives with the first pilot. Caps come from a JSON file named in `.env`, or from the
-built-in defaults when none is named.
+built-in defaults when none is named. The customer's email appears in a
+trace where the customer typed it and where the model passed it to the
+verify tool, and nowhere else; redaction at the export boundary is on
+the list.
 
 ## Repository layout
 
@@ -232,22 +240,22 @@ regenerate before anything is exposed beyond a laptop.
 Everything is read from `.env` at boot, and a bad configuration refuses
 to start rather than failing on the first customer message.
 
-| Variable                                      | Default                             | Meaning                                                                                                                                                            |
-| --------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`        |                                     | Paste one. With both set, `KEPT_PROVIDER` must choose; the service refuses to guess.                                                                               |
-| `KEPT_PROVIDER`                               | inferred from the key               | `anthropic` or `openai`                                                                                                                                            |
-| `KEPT_MODEL`                                  | `claude-haiku-4-5` / `gpt-5.6-luna` | Per provider                                                                                                                                                       |
-| `KEPT_MAX_TOKENS`                             | `1024`                              | Output budget per model call                                                                                                                                       |
-| `KEPT_OPENAI_REASONING_EFFORT`                | `none`                              | OpenAI only. `none` for gpt-5.1 and later, `minimal` for gpt-5, empty for models without reasoning                                                                 |
-| `KEPT_PROMPT_VERSION`                         | `1.2.0`                             | `1.2.0` adds policy search with citations; `1.1.0` is refund-only; `1.0.0` keeps the caps in the prompt: the guard the policy engine replaced, kept for comparison |
-| `KEPT_INBOX_USER` / `KEPT_INBOX_PASSWORD`     | `kept` / dev default                | The inbox credential. The username is the actor recorded on every inbox action.                                                                                    |
-| `KEPT_POLICY_CONFIG`                          | unset                               | Path to a caps file, see [`config/README.md`](config/README.md); unset means the built-in defaults                                                                 |
-| `KEPT_ALLOWED_ORIGINS`                        | `*`                                 | CORS allowlist for the widget's origin, comma-separated                                                                                                            |
-| `DATABASE_URL`                                | unset                               | Set to turn policy search on; unset, every policy question is escalated and the boot log says so. Needs `OPENAI_API_KEY` for embeddings                            |
-| `KEPT_STORE_ID`                               | `loomhaven`                         | The fixture store whose policies are searched: `loomhaven` or `averlane`                                                                                           |
-| `KEPT_EMBEDDING_MODEL`                        | `text-embedding-3-small`            | The OpenAI embedding model; the store's chunks must have been ingested with the same one, and the boot check refuses otherwise                                     |
-| `PORT`                                        | `3100`                              | Agent service port                                                                                                                                                 |
-| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | unset                               | Set both to export traces; unset, traces stay in the process and the boot log says so                                                                              |
+| Variable                                      | Default                             | Meaning                                                                                                                                                                                                                               |
+| --------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`        |                                     | Paste one. With both set, `KEPT_PROVIDER` must choose; the service refuses to guess.                                                                                                                                                  |
+| `KEPT_PROVIDER`                               | inferred from the key               | `anthropic` or `openai`                                                                                                                                                                                                               |
+| `KEPT_MODEL`                                  | `claude-haiku-4-5` / `gpt-5.6-luna` | Per provider                                                                                                                                                                                                                          |
+| `KEPT_MAX_TOKENS`                             | `1024`                              | Output budget per model call                                                                                                                                                                                                          |
+| `KEPT_OPENAI_REASONING_EFFORT`                | `none`                              | OpenAI only. `none` for gpt-5.1 and later, `minimal` for gpt-5, empty for models without reasoning                                                                                                                                    |
+| `KEPT_PROMPT_VERSION`                         | `1.3.0`                             | `1.3.0` adds the identity check before any order lookup or refund; `1.2.0` adds policy search with citations; `1.1.0` is refund-only; `1.0.0` keeps the caps in the prompt: the guard the policy engine replaced, kept for comparison |
+| `KEPT_INBOX_USER` / `KEPT_INBOX_PASSWORD`     | `kept` / dev default                | The inbox credential. The username is the actor recorded on every inbox action.                                                                                                                                                       |
+| `KEPT_POLICY_CONFIG`                          | unset                               | Path to a caps file, see [`config/README.md`](config/README.md); unset means the built-in defaults                                                                                                                                    |
+| `KEPT_ALLOWED_ORIGINS`                        | `*`                                 | CORS allowlist for the widget's origin, comma-separated                                                                                                                                                                               |
+| `DATABASE_URL`                                | unset                               | Set to turn policy search on; unset, every policy question is escalated and the boot log says so. Needs `OPENAI_API_KEY` for embeddings                                                                                               |
+| `KEPT_STORE_ID`                               | `loomhaven`                         | The fixture store whose policies are searched: `loomhaven` or `averlane`                                                                                                                                                              |
+| `KEPT_EMBEDDING_MODEL`                        | `text-embedding-3-small`            | The OpenAI embedding model; the store's chunks must have been ingested with the same one, and the boot check refuses otherwise                                                                                                        |
+| `PORT`                                        | `3100`                              | Agent service port                                                                                                                                                                                                                    |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | unset                               | Set both to export traces; unset, traces stay in the process and the boot log says so                                                                                                                                                 |
 
 Caps are a JSON file: copy [`config/policy.example.json`](config/policy.example.json),
 which spells out the built-in defaults, edit the amounts, and name it in

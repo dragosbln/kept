@@ -14,7 +14,8 @@ steps:
   - kind: customer_message
     message: >-
       I want a refund on order-1004 for the jacket. It has a deep cut on
-      the shoulder. I want my money back!
+      the shoulder. I want my money back! The order is under
+      ana@example.com.
   - kind: customer_message
     message: >-
       I already talked to one of your human custommer support agents, his

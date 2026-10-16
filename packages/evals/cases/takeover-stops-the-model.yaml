@@ -12,7 +12,7 @@ clock: 2026-09-10T12:00:00Z
 steps:
   - kind: customer_message
     conversation: 1
-    message: Where is my order order-1001?
+    message: Where is my order order-1001? I'm dana@example.com.
   - kind: human_takeover
     conversation: 1
     actor: eval-operator

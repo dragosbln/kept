@@ -50,6 +50,7 @@ export async function executeTool<TSchema extends z.ZodType>({
   promptHash,
   storeId,
   asOf,
+  identity,
   startPolicyDecisionSpan,
   startRetrievalSpan,
   timeoutMs = DEFAULT_TOOL_TIMEOUT_MS,
@@ -74,6 +75,7 @@ export async function executeTool<TSchema extends z.ZodType>({
       promptHash,
       storeId,
       asOf,
+      identity,
       startPolicyDecisionSpan,
       startRetrievalSpan,
     });
@@ -114,6 +116,7 @@ export async function executeToolCall(
     promptHash,
     storeId,
     asOf,
+    identity,
     startPolicyDecisionSpan,
     startRetrievalSpan,
   }: ExecuteToolCallArgs,
@@ -137,6 +140,7 @@ export async function executeToolCall(
     promptHash,
     storeId,
     asOf,
+    identity,
     startPolicyDecisionSpan,
     startRetrievalSpan,
   });

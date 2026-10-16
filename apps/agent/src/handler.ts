@@ -28,6 +28,7 @@ import {
   Trace,
   InboxService,
   assertStoreEmbeddingModel,
+  createConversationIdentity,
   createDb,
   createToolRegistry,
   makeDemoOrders,
@@ -490,7 +491,9 @@ export async function createAgentService(
   const retrieval: RetrievalHandle = deps.retrieval
     ? { service: deps.retrieval, close: async () => {} }
     : await buildRetrieval(config);
-  const registry = createToolRegistry(backend, ledger, policyEngine, retrieval.service);
+  const registry = createToolRegistry(backend, ledger, policyEngine, retrieval.service, {
+    faultToggles,
+  });
   const modelClient = buildModelClient(config, promptData, registry);
   const store = deps.store ?? new InMemoryConversationStore();
   const auditLog = deps.auditLog ?? new InMemoryAuditLog();
@@ -550,6 +553,10 @@ export async function createAgentService(
         return { kind: 'ok', conversationId: conversation.id, outcome };
       }
 
+      // What the conversation has proved so far; verify_identity adds to it
+      // during the turn and the snapshot is persisted below (block 5).
+      const identity = createConversationIdentity(conversation.verifiedEmails ?? []);
+
       try {
         const { outcome, updatedHistory } = await runTurn({
           history: conversation.messages,
@@ -561,11 +568,19 @@ export async function createAgentService(
           // production and the case's clock under the eval runner (deps.now).
           storeId: config.storeId,
           asOf: now(),
+          identity,
           faultToggles,
           trace,
         });
 
         await store.updateConversationHistory(conversation.id, updatedHistory);
+        // A proof is a fact about the customer, not about the reply, so it
+        // persists on every outcome: the history's atomicity exists for the
+        // provider's message sequence, which the verified set is not part of.
+        // The set only grows, so a longer snapshot is the only change possible.
+        if (identity.verifiedEmails.length > (conversation.verifiedEmails?.length ?? 0)) {
+          await store.updateVerifiedEmails(conversation.id, identity.verifiedEmails);
+        }
 
         return { kind: 'ok', conversationId: conversation.id, outcome };
       } finally {

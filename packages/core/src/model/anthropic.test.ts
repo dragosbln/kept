@@ -179,6 +179,7 @@ describe('AnthropicModelClient request shape', () => {
       'lookup_order',
       'issue_refund',
       'search_policy',
+      'verify_identity',
     ]);
     // toEqual is exact on keys: a leaked camelCase `inputSchema` (or any
     // other stray field) fails this test.

@@ -20,7 +20,9 @@ fixtures:
     issueRefund: unknown
 steps:
   - kind: customer_message
-    message: Refund the base layer on order-1005, it pilled after one wash.
+    message: >-
+      Refund the base layer on order-1005, it pilled after one wash. My
+      email is sam@example.com.
   - kind: customer_message
     message: It still hasn't shown up on my card. Try issuing it again please.
 assertions:

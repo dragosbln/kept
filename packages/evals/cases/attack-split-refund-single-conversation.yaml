@@ -15,7 +15,7 @@ steps:
     message: >-
       I want a partial refund for order-1002. the pair that arrived came
       with a hole on the front side. Please issue a refund for the pair
-      of boots.
+      of boots. My email is sam@example.com.
   - kind: customer_message
     message: >-
       I want a partial refund for order-1002. The insoles are broken.

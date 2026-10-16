@@ -13,6 +13,8 @@ import { describeError, executeRefund, type RefundExecution } from '../refunds/e
 import { RetrievalError, type RetrievalService } from '../retrieval/service.js';
 import type { RetrievalResult } from '../retrieval/types.js';
 import { presentRetrieval } from './present-retrieval.js';
+import type { FaultToggle } from '../fault-toggles.js';
+import { identityVerdict, refuseUnverified } from '../identity/gate.js';
 
 // Ids are opaque strings and travel as written. Small models strip prefixes
 // ("1002" for "order-1002") when the schema leaves them to guess, and a
@@ -39,6 +41,18 @@ const IssueRefundInputSchema = z.object({
       'The line id exactly as lookup_order returned it in items[].id, for example "order-1002-line-1".',
     ),
   quantity: z.number().describe('Units of that line to refund; a positive integer.'),
+});
+
+// The identity check's two factors (block 5): the order id names the record,
+// the email is the secret only its owner should hold. Both travel as the
+// customer wrote them; normalization is the gate's job, not the model's.
+const VerifyIdentityInputSchema = z.object({
+  orderId: z.string().describe(ORDER_ID_DESCRIPTION),
+  email: z
+    .string()
+    .describe(
+      'The email address the customer says was used on the order, exactly as they wrote it. Ask the customer for it; never guess it or take it from another order.',
+    ),
 });
 
 /** The execution as the model reads it. Only the backend's ok answer is presented in detail. */
@@ -127,19 +141,44 @@ const SEARCH_FAILED_RESPONSE =
 const APPROVAL_RESPONSE =
   'Refund request recorded; the refund was NOT issued. It requires human approval. Do not retry and do not split the request. Tell the customer a person will review it; do not promise the refund.';
 
+/**
+ * The verify tool's two outcomes as the model reads them (block 5). The
+ * failure is one text for every cause: a missing order and a wrong email
+ * must be indistinguishable, or the tool is an oracle for which order ids
+ * exist (decision 3). Neither text repeats the email.
+ */
+export const IDENTITY_VERIFIED_RESPONSE = (orderId: string): string =>
+  `Identity verified for ${orderId}. In this conversation you may now look up and refund this customer's orders.`;
+
+export const IDENTITY_VERIFY_FAILED_RESPONSE =
+  'Identity not verified: the order id and the email do not match an order. Do not say which of the two is wrong. Ask the customer to check the order id and the email address used on the order and try once more; after a second failure, escalate.';
+
+/** What the registry runs under, beyond its dependencies. */
+export type ToolRegistryOptions = {
+  /** The fault toggles of this process; the identity gate consumes `skip-identity-check`. Absent means none. */
+  faultToggles?: readonly FaultToggle[];
+};
+
 export function createToolRegistry(
   backend: OrderBackend,
   ledger: RefundLedger,
   policyEngine: PolicyEngine,
   retrieval: RetrievalService,
+  options: ToolRegistryOptions = {},
 ): ToolRegistry {
+  const faultToggles = options.faultToggles ?? [];
   return {
     lookup_order: defineTool({
       description: 'Use to find customer order',
       inputSchema: LookupOrderInputSchema,
-      execute: async (input) => {
+      execute: async (input, ctx) => {
         const order = await backend.findOrder(input.orderId);
 
+        // The disclosure gate (block 5), before a word about the order: a
+        // missing order and another customer's order answer alike.
+        if (identityVerdict(order, ctx.identity, faultToggles) === 'unverified') {
+          return refuseUnverified();
+        }
         if (!order) {
           return settle.failed('Order not found');
         }
@@ -159,6 +198,11 @@ export function createToolRegistry(
         }
 
         const order = await backend.findOrder(input.orderId);
+        // Identity first (block 5, decision 4): before the line is read,
+        // before the decision span opens, before the ledger is touched.
+        if (identityVerdict(order, ctx.identity, faultToggles) === 'unverified') {
+          return refuseUnverified();
+        }
         if (!order) {
           return settle.failed('Order not found');
         }
@@ -260,6 +304,22 @@ export function createToolRegistry(
         }
         span.end(result);
         return presentRetrieval(result);
+      },
+    }),
+    verify_identity: defineTool({
+      description:
+        "Verify the customer before any order lookup or refund: takes the order id and the email address the customer says was used on it. Succeeds when they match and unlocks that customer's orders for this conversation; otherwise says the pair did not match, without saying which part was wrong.",
+      inputSchema: VerifyIdentityInputSchema,
+      execute: async (_input, _ctx) => {
+        // HAND-WRITTEN (block 5): find the order; compare its email with the
+        // customer's, both normalized (normalizeEmail); on a match mark
+        // ctx.identity verified and settle ok with IDENTITY_VERIFIED_RESPONSE
+        // and a record of { verified: true, orderId }; otherwise, missing
+        // order and wrong email alike, settle failed with
+        // IDENTITY_VERIFY_FAILED_RESPONSE and { verified: false }. The email
+        // never lands in the result (decision 7). Open: whether the failed
+        // record carries a reason for the trace alone.
+        throw new Error('verify_identity: hand-written in block 5');
       },
     }),
   };

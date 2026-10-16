@@ -9,7 +9,7 @@
 //   swallow-tool-errors   agent/executor.ts         failed and unknown tool results reach the model as ok
 //   retrieval-scope-off   retrieval/service.ts      the knowledge-base query drops the store filter
 //   stale-kb              retrieval/service.ts      the binding query drops the effective-date window
-//   skip-identity-check   block 5
+//   skip-identity-check   identity/gate.ts         the order tools' disclosure gate passes without verification
 
 export const FAULT_TOGGLES = [
   'caps-per-call-only',

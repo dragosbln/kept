@@ -6,6 +6,7 @@ import type {
   ToolResult,
 } from '../tools/types.js';
 import type { FaultToggle } from '../fault-toggles.js';
+import type { ConversationIdentity } from '../identity/types.js';
 import type { ModelClient } from '../model/client.js';
 import type { Trace } from '../tracing/trace.js';
 import type { Message, ToolArgs } from '../messages.js';
@@ -22,6 +23,7 @@ export type ExecuteToolParams<TSchema extends z.ZodType> = {
   promptHash: string;
   storeId: string;
   asOf: number;
+  identity: ToolExecuteContext['identity'];
   startPolicyDecisionSpan: ToolExecuteContext['startPolicyDecisionSpan'];
   startRetrievalSpan: ToolExecuteContext['startRetrievalSpan'];
 };
@@ -36,6 +38,7 @@ export type ExecuteToolCallArgs = {
   promptHash: string;
   storeId: string;
   asOf: number;
+  identity: ToolExecuteContext['identity'];
   startPolicyDecisionSpan: ToolExecuteContext['startPolicyDecisionSpan'];
   startRetrievalSpan: ToolExecuteContext['startRetrievalSpan'];
 };
@@ -88,6 +91,12 @@ export type RunTurnParams = {
   storeId: string;
   /** The turn's clock, epoch ms; passed to every tool of the turn (ToolExecuteContext.asOf). */
   asOf: number;
+  /**
+   * What the conversation has proved about who is typing; passed to every
+   * tool of the turn (ToolExecuteContext.identity). The host builds it from
+   * the conversation and persists it after the turn; the loop never reads it.
+   */
+  identity: ConversationIdentity;
   /**
    * The fault toggles this process runs under. The loop consumes one,
    * `swallow-tool-errors`, between the executor and the span; the rest

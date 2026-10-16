@@ -117,4 +117,27 @@ describe('InMemoryConversationStore', () => {
     expect(updated.takeOver).toEqual({ takenOverAt: 1, actor: 'dragos' });
     await expect(store.markTakeOver('nope', { takenOverAt: 1, actor: 'x' })).rejects.toThrow();
   });
+
+  it('replaces the verified emails and keeps them through later history updates (block 5)', async () => {
+    const store = new InMemoryConversationStore();
+    const { id } = await store.createNewConversation();
+    expect((await store.findConversation(id))?.verifiedEmails).toBeUndefined();
+    const updated = await store.updateVerifiedEmails(id, ['dana@example.com']);
+    expect(updated.verifiedEmails).toEqual(['dana@example.com']);
+    const after = await store.updateConversationHistory(id, [userMessage('still here')]);
+    expect(after.verifiedEmails).toEqual(['dana@example.com']);
+    await expect(store.updateVerifiedEmails('nope', [])).rejects.toThrow(/nope/);
+  });
+
+  it('copies the verified emails in and out: neither the argument nor a result reaches the store', async () => {
+    const store = new InMemoryConversationStore();
+    const { id } = await store.createNewConversation();
+    const emails = ['dana@example.com'];
+    const updated = await store.updateVerifiedEmails(id, emails);
+    emails.push('sneaky@example.com');
+    (updated.verifiedEmails as string[]).push('sneaky-too@example.com');
+    const found = await store.findConversation(id);
+    (found!.verifiedEmails as string[]).push('sneaky-three@example.com');
+    expect((await store.findConversation(id))?.verifiedEmails).toEqual(['dana@example.com']);
+  });
 });

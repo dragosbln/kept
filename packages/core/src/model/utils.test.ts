@@ -57,6 +57,7 @@ describe('toModelToolRegistry', () => {
       'lookup_order',
       'issue_refund',
       'search_policy',
+      'verify_identity',
     ]);
   });
 

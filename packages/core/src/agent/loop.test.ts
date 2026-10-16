@@ -15,6 +15,7 @@ import { Trace } from '../tracing/trace.js';
 import type { CompletedTrace, TraceConfig } from '../tracing/types.js';
 import { createToolRegistry } from '../tools/registry.js';
 import { stubRetrievalService } from '../retrieval/testing.js';
+import { createConversationIdentity } from '../identity/identity.js';
 import { defineTool } from '../tools/utils.js';
 import type { ToolRegistry } from '../tools/types.js';
 import { DemoBackend } from '../backend/demo.js';
@@ -100,8 +101,16 @@ const registry = createToolRegistry(
   stubRetrievalService(),
 );
 
-/** Scope every turn here runs under; the tools never search, so any store and clock do. */
-const SCOPE = { storeId: 'loomhaven', asOf: Date.UTC(2026, 8, 21) };
+/**
+ * Scope every turn here runs under; the tools never search, so any store and
+ * clock do. Every demo customer is proved, so the gate is not what these
+ * tests exercise; its own tests build identities fresh.
+ */
+const SCOPE = {
+  storeId: 'loomhaven',
+  asOf: Date.UTC(2026, 8, 21),
+  identity: createConversationIdentity(makeDemoOrders().map((order) => order.email)),
+};
 
 type RunReturnType = {
   trace: Trace;
@@ -234,6 +243,7 @@ describe('runTurn', () => {
       }),
       issue_refund: registry.issue_refund,
       search_policy: registry.search_policy,
+      verify_identity: registry.verify_identity,
     };
 
     await run(
@@ -286,6 +296,7 @@ describe('runTurn', () => {
       }),
       issue_refund: registry.issue_refund,
       search_policy: registry.search_policy,
+      verify_identity: registry.verify_identity,
     };
 
     const { trace, promise } = run(
@@ -589,6 +600,7 @@ describe('runTurn', () => {
       }),
       issue_refund: registry.issue_refund,
       search_policy: registry.search_policy,
+      verify_identity: registry.verify_identity,
     };
     const { trace, promise } = run(
       [
@@ -628,6 +640,7 @@ describe('runTurn under swallow-tool-errors', () => {
     }),
     issue_refund: registry.issue_refund,
     search_policy: registry.search_policy,
+    verify_identity: registry.verify_identity,
   };
   const script = (): CallModelResponse[] => [
     toolUse([{ id: 'call-1', name: 'lookup_order', args: { orderId: 'order-1001' } }]),
@@ -668,5 +681,42 @@ describe('runTurn under swallow-tool-errors', () => {
       status: 'unknown',
       response: 'Backend unreachable. Do not retry.',
     });
+  });
+});
+
+describe('the identity handle (block 5)', () => {
+  it('hands every tool the same identity handle the host gave the turn', async () => {
+    const handle = createConversationIdentity(['dana@example.com']);
+    const seen: boolean[] = [];
+    const spying: ToolRegistry = {
+      ...registry,
+      lookup_order: defineTool({
+        description: 'spy',
+        inputSchema: z.object({ orderId: z.string() }),
+        execute: async (_input, ctx) => {
+          seen.push(ctx.identity === handle);
+          return { resultState: 'ok', result: null, response: 'seen' };
+        },
+      }),
+    };
+    const trace = new Trace(traceConfig);
+    const modelClient = new FakeModelClient([
+      toolUse([
+        { id: 'call-1', name: 'lookup_order', args: { orderId: 'order-1001' } },
+        { id: 'call-2', name: 'lookup_order', args: { orderId: 'order-1002' } },
+      ]),
+      endTurn('Both looked up.'),
+    ]);
+    await runTurn({
+      history: [],
+      message: 'Where are my orders?',
+      modelClient,
+      tools: spying,
+      trace,
+      conversationId: traceConfig.sessionId,
+      ...SCOPE,
+      identity: handle,
+    });
+    expect(seen).toEqual([true, true]);
   });
 });

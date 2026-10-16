@@ -2,8 +2,9 @@ import { z } from 'zod';
 import type { ToolResultState } from '../messages.js';
 import type { PolicyDecisionSpan, RetrievalSpan } from '../tracing/span.js';
 import type { StartPolicyDecisionPayload, StartRetrievalPayload } from '../tracing/types.js';
+import type { ConversationIdentity } from '../identity/types.js';
 
-export type ToolName = 'lookup_order' | 'issue_refund' | 'search_policy';
+export type ToolName = 'lookup_order' | 'issue_refund' | 'search_policy' | 'verify_identity';
 
 export type ToolResult = {
   resultState: ToolResultState;
@@ -50,6 +51,14 @@ export type ToolExecuteContext = {
    * their own, which is why core never reads Date.now() here.
    */
   asOf: number;
+  /**
+   * What this conversation has proved about who is typing (block 5). Read by
+   * the order tools' disclosure gate, written by verify_identity on a match,
+   * never from the model's arguments directly. The host builds it from the
+   * conversation before the turn and persists the snapshot after; the loop
+   * carries it untouched, like the conversation id.
+   */
+  identity: ConversationIdentity;
   /**
    * Opens a retrieval span under this call's tool_execution span; the
    * search tool opens exactly one per consultation and ends it on every

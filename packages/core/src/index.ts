@@ -6,6 +6,7 @@
 
 export * from './tracing/index.js';
 export * from './fault-toggles.js';
+export * from './identity/index.js';
 export * from './conversation/index.js';
 export * from './messages.js';
 export * from './prompt/index.js';
