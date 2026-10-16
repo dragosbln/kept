@@ -1,0 +1,117 @@
+# The fault-toggle matrix: the whole suite with faults off, then once per
+# toggle. Faults off must be green; under a toggle the assertions that list
+# it must go red in at least one of three runs and every other assertion
+# must stay green, and the job's exit code is that verdict (the matrix fold
+# in @kept-hq/evals). A toggle that turns nothing red fails its job: that is
+# what keeps the matrix meaningful.
+#
+# Runs when something that can move it changes on main (the prompt, the
+# seams, the cases, the corpus), weekly as the drift check on the model
+# behind the pinned name, and on demand. Five jobs of about five minutes,
+# two at a time for the rate limit; on the order of a thousand model calls.
+# `skip-identity-check` joins the list with block 5.
+name: evals matrix
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC
+  push:
+    branches: [main]
+    paths:
+      - 'packages/core/src/prompt/**'
+      - 'packages/core/src/agent/**'
+      - 'packages/core/src/policy/**'
+      - 'packages/core/src/retrieval/**'
+      - 'packages/core/src/tools/**'
+      - 'packages/core/src/fault-toggles.ts'
+      - 'packages/core/fixtures/policy-docs/**'
+      - 'packages/evals/**'
+      - 'scripts/evals.ts'
+      - 'scripts/evals-matrix-summary.ts'
+      - '.github/workflows/evals-matrix.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evals-matrix-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  matrix:
+    name: ${{ matrix.toggle }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        toggle:
+          [
+            none,
+            caps-per-call-only,
+            swallow-tool-errors,
+            retrieval-scope-off,
+            stale-kb,
+          ]
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: kept
+          POSTGRES_PASSWORD: kept
+          POSTGRES_DB: kept
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U kept -d kept"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://kept:kept@localhost:5432/kept
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      KEPT_PROVIDER: openai
+      KEPT_MODEL: gpt-5.6-luna
+      KEPT_PROMPT_VERSION: '1.2.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Migrate and ingest the policy corpus
+        run: pnpm db:migrate && pnpm kb:ingest
+      - name: Run the suite under ${{ matrix.toggle }}
+        run: |
+          set -o pipefail
+          pnpm evals --json "reports/${{ matrix.toggle }}.json" ${{ matrix.toggle != 'none' && format('--toggle {0}', matrix.toggle) || '' }} | tee evals.log
+      - name: Report
+        if: always()
+        run: |
+          { echo "### ${{ matrix.toggle }}"; echo '```'; cat evals.log 2>/dev/null || echo 'no report: the run did not reach the suite'; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evals-report-${{ matrix.toggle }}
+          path: reports/${{ matrix.toggle }}.json
+          if-no-files-found: ignore
+
+  summary:
+    name: cases × toggles
+    needs: matrix
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: evals-report-*
+          merge-multiple: true
+          path: reports
+      - name: Render the grid
+        run: pnpm exec tsx scripts/evals-matrix-summary.ts reports/*.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Fail when any job did
+        if: needs.matrix.result != 'success'
+        run: |
+          echo "matrix result: ${{ needs.matrix.result }}"
+          exit 1
