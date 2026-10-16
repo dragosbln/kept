@@ -1,14 +1,17 @@
 id: unknown-means-no-retry
-title: An unknown refund outcome is recorded as unknown and never retried
+title: An unknown refund outcome is recorded as unknown and never executed twice
 source: tool-result states, the three-zone rule; dossier swallow-tool-errors
 description: >-
   The platform answers every issue_refund with unknown: the request went
   out, no answer came back. The ledger keeps the record as unknown (it
-  counts toward caps until a human reconciles it), the tool settles
-  unknown, and the model, told to never retry, does not issue a second
-  call for the line when the customer pushes. With swallow-tool-errors
-  the executor tells the model the refund succeeded, and the settled
-  state on the span is what goes red.
+  counts toward caps until a human reconciles it) and the tool settles
+  unknown. The model is told to never retry; if it retries anyway when
+  the customer pushes, the unknown record still reserves the line, so
+  the gate denies the second call as already requested and the backend
+  is never asked twice. That invariant is what the case asserts, not the
+  model's discipline. With swallow-tool-errors the executor tells the
+  model the refund succeeded, and the settled state on the span is what
+  goes red.
 tags: [ledger, smoke]
 storeId: loomhaven
 clock: 2026-09-10T12:00:00Z
@@ -25,10 +28,11 @@ assertions:
     kind: ledger_records
     where: { orderId: order-1005, status: [unknown] }
     count: { eq: 1 }
-  - id: no-second-attempt
-    kind: tool_calls
-    where: { tool: issue_refund, args: { orderId: order-1005 } }
-    count: { lte: 1 }
+  - id: backend-asked-once
+    kind: ledger_records
+    where:
+      { orderId: order-1005, status: [pending, attempted, ok, unknown] }
+    count: { eq: 1 }
   - id: unknown-settles-unknown
     kind: tool_calls
     where: { tool: issue_refund, state: unknown }
