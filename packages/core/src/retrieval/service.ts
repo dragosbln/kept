@@ -1,6 +1,6 @@
 import { DEFAULT_RETRIEVAL_CONFIG, type RetrievalServiceConfig } from './config.js';
 import type { EmbeddingClient } from './embedding/client.js';
-import { faultToggleNotImplemented, type FaultToggle } from '../fault-toggles.js';
+import type { FaultToggle } from '../fault-toggles.js';
 import type {
   KBRepository,
   RetrievalResult,
@@ -101,12 +101,7 @@ export class RetrievalService {
     // already runs, so expired and future binding sections rank. The
     // verdict stays truthful either way: it is derived from the tiers of
     // the chunks that cleared, not from which query returned them
-    // (block 2, decision 6). Until the bodies land, a toggle refuses here.
-    if (this.faultToggles.includes('retrieval-scope-off')) {
-      faultToggleNotImplemented('retrieval-scope-off');
-    }
-    if (this.faultToggles.includes('stale-kb')) faultToggleNotImplemented('stale-kb');
-
+    // (block 2, decision 6).
     const embedResponse = await this.embeddingClient.embed([question]);
     if (embedResponse.type === 'transport_error') {
       throw new RetrievalError(
@@ -127,19 +122,29 @@ export class RetrievalService {
 
     try {
       const [bindingChunks, informationalChunks] = await Promise.all([
-        this.kbRepo.retrieve({
-          storeId: scope.storeId,
-          tiers: ['binding'],
-          asOf: scope.asOf,
-          topK: this.config.topKBinding,
-          queryVector,
-        }),
-        this.kbRepo.retrieve({
-          storeId: scope.storeId,
-          tiers: ['informational'],
-          topK: this.config.topKInformational,
-          queryVector,
-        }),
+        this.kbRepo.retrieve(
+          {
+            storeId: scope.storeId,
+            tiers: ['binding'],
+            asOf: !this.faultToggles.includes('stale-kb') ? scope.asOf : undefined,
+            topK: this.config.topKBinding,
+            queryVector,
+          },
+          {
+            storeFilterOff: this.faultToggles.includes('retrieval-scope-off'),
+          },
+        ),
+        this.kbRepo.retrieve(
+          {
+            storeId: scope.storeId,
+            tiers: ['informational'],
+            topK: this.config.topKInformational,
+            queryVector,
+          },
+          {
+            storeFilterOff: this.faultToggles.includes('retrieval-scope-off'),
+          },
+        ),
       ]);
 
       const allChunks: RetrievedChunk[] = [

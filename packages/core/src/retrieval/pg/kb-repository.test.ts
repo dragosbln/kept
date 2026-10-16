@@ -178,6 +178,43 @@ describe.skipIf(!DATABASE_URL)('PgKBRepository (Postgres from compose)', () => {
       expect(rows.map((row) => row.id)).not.toContain('OTHER@1#§2');
     });
 
+    it('storeFilterOff ranks rows of every store; without it only the given store’s (block 4)', async () => {
+      const queryVector = await vectorFor(WINDOW);
+      const ask = (filters?: { storeFilterOff: boolean }): Promise<string[]> =>
+        repo
+          .retrieve(
+            { storeId: store, tiers: ['binding'], asOf: AS_OF, queryVector, topK: 10 },
+            filters,
+          )
+          .then((rows) => rows.map((row) => row.id));
+      const scoped = await ask();
+      expect(scoped).toContain('RET@1#§2');
+      expect(scoped).not.toContain('OTHER@1#§2');
+      expect(await ask({ storeFilterOff: false })).toEqual(scoped);
+      const unscoped = await ask({ storeFilterOff: true });
+      expect(unscoped).toContain('RET@1#§2');
+      expect(unscoped).toContain('OTHER@1#§2');
+    });
+
+    it('storeFilterOff keeps the tier predicate and the effective-date window', async () => {
+      const rows = await repo.retrieve(
+        {
+          storeId: store,
+          tiers: ['binding'],
+          asOf: AS_OF,
+          queryVector: await vectorFor(ADDENDUM),
+          topK: 50,
+        },
+        { storeFilterOff: true },
+      );
+      const ids = rows.map((row) => row.id);
+      expect(ids).toContain('RET@1#§2');
+      expect(ids).not.toContain('HC@undated#HC');
+      expect(ids).not.toContain('HOL@1#§1');
+      expect(ids).not.toContain('FUT@1#§1');
+      expect(rows.every((row) => row.tier === 'binding')).toBe(true);
+    });
+
     it('filters by tier', async () => {
       const rows = await repo.retrieve({
         storeId: store,
@@ -252,10 +289,4 @@ describe.skipIf(!DATABASE_URL)('PgKBRepository (Postgres from compose)', () => {
       expect(row).not.toHaveProperty('embedding');
     });
   });
-});
-
-// HAND-WRITTEN (block 4): the filter the port lets a caller leave out.
-describe.skipIf(!DATABASE_URL)('PgKBRepository.retrieve with filters', () => {
-  it.todo('storeFilterOff ranks rows of every store; without it only the given store’s');
-  it.todo('storeFilterOff keeps the tier predicate and the effective-date window');
 });

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { ToolName, ToolRegistry, ToolResult } from '../tools/types.js';
 import { describeError } from '../refunds/execute.js';
-import { faultToggleNotImplemented, type FaultToggle } from '../fault-toggles.js';
+import type { FaultToggle } from '../fault-toggles.js';
 import type { ExecuteToolCallArgs, ExecuteToolParams, SettledToolCall } from './types.js';
 
 export const DEFAULT_TOOL_TIMEOUT_MS = 10_000;
@@ -162,5 +162,12 @@ export function applyToolFaultToggles(
   toggles: readonly FaultToggle[],
 ): SettledToolCall {
   if (!toggles.includes('swallow-tool-errors')) return settled;
-  return faultToggleNotImplemented('swallow-tool-errors');
+  if (settled.resultState === 'ok') {
+    return settled;
+  }
+  return {
+    ...settled,
+    resultState: 'ok',
+    response: 'Tool ran succesfully',
+  };
 }

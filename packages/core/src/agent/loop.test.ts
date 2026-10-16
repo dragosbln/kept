@@ -109,7 +109,9 @@ type RunReturnType = {
   promise: Promise<RunTurnResult>;
 };
 
-type RunOverrides = Partial<Pick<RunTurnParams, 'limits' | 'tools' | 'logger' | 'conversationId'>>;
+type RunOverrides = Partial<
+  Pick<RunTurnParams, 'limits' | 'tools' | 'logger' | 'conversationId' | 'faultToggles'>
+>;
 
 function run(script: CallModelResponse[], overrides: RunOverrides = {}): RunReturnType {
   const trace = new Trace(traceConfig);
@@ -611,11 +613,60 @@ describe('runTurn', () => {
   });
 });
 
-// HAND-WRITTEN (block 4): what the loop does with the swallow. The span and
-// the tool-result message both see the rewritten call, never the truth.
+// The swallow seen from the loop (block 4): the span and the tool-result
+// message both carry the rewritten call, never the executor's truth.
 describe('runTurn under swallow-tool-errors', () => {
-  it.todo(
-    'an unknown tool result ends its tool_execution span with resultState ok and reaches the model with status ok',
-  );
-  it.todo('without the toggle the span and the message carry the executor’s state unchanged');
+  const unreachable: ToolRegistry = {
+    lookup_order: defineTool({
+      description: 'a backend that never answers',
+      inputSchema: z.object({ orderId: z.string() }),
+      execute: async () => ({
+        resultState: 'unknown',
+        result: { timeoutAfterMs: 1 },
+        response: 'Backend unreachable. Do not retry.',
+      }),
+    }),
+    issue_refund: registry.issue_refund,
+    search_policy: registry.search_policy,
+  };
+  const script = (): CallModelResponse[] => [
+    toolUse([{ id: 'call-1', name: 'lookup_order', args: { orderId: 'order-1001' } }]),
+    endTurn('Done.'),
+  ];
+
+  it('an unknown tool result ends its tool_execution span with resultState ok and reaches the model with status ok', async () => {
+    const { trace, modelClient, promise } = run(script(), {
+      tools: unreachable,
+      faultToggles: ['swallow-tool-errors'],
+    });
+    await promise;
+    const completed = trace.end();
+    expect(completed.spans.find((span) => span.kind === 'tool_execution')).toMatchObject({
+      resultState: 'ok',
+      result: { timeoutAfterMs: 1 },
+    });
+    const toolResults = modelClient.calls[1]?.at(-1);
+    expect(toolResults?.parts[0]).toMatchObject({
+      type: 'tool_call_response',
+      id: 'call-1',
+      status: 'ok',
+    });
+    expect(toolResults?.parts[0]).not.toMatchObject({
+      response: 'Backend unreachable. Do not retry.',
+    });
+  });
+
+  it('without the toggle the span and the message carry the executor’s state unchanged', async () => {
+    const { trace, modelClient, promise } = run(script(), { tools: unreachable });
+    await promise;
+    const completed = trace.end();
+    expect(completed.spans.find((span) => span.kind === 'tool_execution')).toMatchObject({
+      resultState: 'unknown',
+    });
+    expect(modelClient.calls[1]?.at(-1)?.parts[0]).toMatchObject({
+      type: 'tool_call_response',
+      status: 'unknown',
+      response: 'Backend unreachable. Do not retry.',
+    });
+  });
 });

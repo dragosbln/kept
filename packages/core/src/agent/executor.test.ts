@@ -6,7 +6,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { executeToolCall } from './executor.js';
+import { applyToolFaultToggles, executeToolCall } from './executor.js';
+import type { SettledToolCall } from './types.js';
 import { defineTool } from '../tools/utils.js';
 import type { ToolRegistry } from '../tools/types.js';
 import { Trace } from '../tracing/trace.js';
@@ -270,18 +271,67 @@ describe('executeToolCall', () => {
   });
 });
 
-// HAND-WRITTEN (block 4): the swallow. Names of the invariants; the bodies
-// land with the toggle. The failing path first: a swallow that keeps the
-// do-not-retry sentence in the response is the false green to rule out.
+// The swallow (block 4, swallow-tool-errors): failed and unknown reach the
+// caller as ok with a plain success line, ok is untouched, the id and the
+// trace-facing result survive. The failing path first: a swallow that keeps
+// the do-not-retry sentence in the response is the false green.
 describe('applyToolFaultToggles', () => {
-  it.todo('no toggle, or any other toggle: the settled call is returned as the same object');
-  it.todo(
-    'swallow-tool-errors: a failed call reaches the caller as ok, with a plain success response',
-  );
-  it.todo(
-    'swallow-tool-errors: an unknown call reaches the caller as ok, without the do-not-retry sentence',
-  );
-  it.todo('swallow-tool-errors: an ok call is returned unchanged');
-  it.todo('the callId and the trace-facing result are kept under the rewrite');
-  it.todo('the rewritten response names no amount, no reference and no error text');
+  const failed: SettledToolCall = {
+    callId: 'call-f',
+    resultState: 'failed',
+    result: { errorName: 'TypeError', errorMessage: 'boom' },
+    response: 'Tool call failed.',
+  };
+  const unknown: SettledToolCall = {
+    callId: 'call-u',
+    resultState: 'unknown',
+    result: { timeoutAfterMs: 10_000 },
+    response: 'Refund state unknown; it may have been issued. Do not retry.',
+  };
+  const ok: SettledToolCall = {
+    callId: 'call-o',
+    resultState: 'ok',
+    result: { refundId: 'rf_1' },
+    response: 'Refund executed successfully: {"refundId":"rf_1","amount":"$89.00"}',
+  };
+
+  it('no toggle, or any other toggle: the settled call is returned as the same object', () => {
+    for (const settled of [failed, unknown, ok]) {
+      expect(applyToolFaultToggles(settled, [])).toBe(settled);
+      expect(applyToolFaultToggles(settled, ['stale-kb', 'caps-per-call-only'])).toBe(settled);
+    }
+  });
+
+  it('swallow-tool-errors: a failed call reaches the caller as ok, with a plain success response', () => {
+    const seen = applyToolFaultToggles(failed, ['swallow-tool-errors']);
+    expect(seen.resultState).toBe('ok');
+    expect(seen.response).not.toBe(failed.response);
+    expect(seen.response).not.toMatch(/fail/i);
+  });
+
+  it('swallow-tool-errors: an unknown call reaches the caller as ok, without the do-not-retry sentence', () => {
+    const seen = applyToolFaultToggles(unknown, ['swallow-tool-errors']);
+    expect(seen.resultState).toBe('ok');
+    expect(seen.response).not.toMatch(/do not retry|unknown/i);
+  });
+
+  it('swallow-tool-errors: an ok call is returned unchanged', () => {
+    expect(applyToolFaultToggles(ok, ['swallow-tool-errors'])).toEqual(ok);
+  });
+
+  it('the callId and the trace-facing result are kept under the rewrite', () => {
+    for (const settled of [failed, unknown]) {
+      const seen = applyToolFaultToggles(settled, ['swallow-tool-errors']);
+      expect(seen.callId).toBe(settled.callId);
+      expect(seen.result).toBe(settled.result);
+    }
+  });
+
+  it('the rewritten response names no amount, no reference and no error text', () => {
+    for (const settled of [failed, unknown]) {
+      const seen = applyToolFaultToggles(settled, ['swallow-tool-errors']);
+      expect(seen.response.trim()).not.toBe('');
+      expect(seen.response).not.toMatch(/\d|\$|refund|error|timed out|boom|rf_/i);
+    }
+  });
 });

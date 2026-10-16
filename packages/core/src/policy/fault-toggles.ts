@@ -1,6 +1,3 @@
-// HAND-WRITTEN (block 4): caps-per-call-only. The skeleton is the signature,
-// the no-toggle path and the tests; the fault itself lands by hand.
-//
 // The cap registry is iterated, never branched on, so the toggle is a
 // filter over the config and nothing in the engine changes: with every cap
 // but `per_call` gone, the per-order, per-customer and per-day sums are
@@ -10,7 +7,6 @@
 // engine ran with (block 3, the cap-sum decision).
 
 import type { FaultToggle } from '../fault-toggles.js';
-import { faultToggleNotImplemented } from '../fault-toggles.js';
 import type { PolicyEngineConfig } from './config.js';
 
 /**
@@ -26,5 +22,8 @@ export function applyPolicyFaultToggles(
   toggles: readonly FaultToggle[],
 ): PolicyEngineConfig {
   if (!toggles.includes('caps-per-call-only')) return config;
-  return faultToggleNotImplemented('caps-per-call-only');
+  return {
+    version: config.version,
+    caps: config.caps.filter((cap) => cap.kind === 'per_call'),
+  };
 }

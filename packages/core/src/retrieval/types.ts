@@ -59,7 +59,7 @@ export type RetrieveKBChunksOptions = {
    * Epoch ms. Present: the effective-date window is applied. Absent: it is
    * not, which is how informational chunks are queried (decision 6).
    */
-  asOf?: number;
+  asOf?: number | undefined;
   queryVector: EmbeddingVector;
   topK: number;
 };

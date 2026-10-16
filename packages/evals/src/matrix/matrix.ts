@@ -1,5 +1,4 @@
-// HAND-WRITTEN (block 4): the matrix fold. The signatures, the types and
-// the tests with empty bodies are the skeleton; the fold lands by hand.
+// HAND-WRITTEN (block 4): the matrix fold.
 //
 // A matrix job runs the suite under one toggle and asks, per assertion,
 // whether it went red where the case said it would (block 3, decision 1):
@@ -15,7 +14,7 @@
 // again over a saved report.
 
 import type { EvalCase, FaultToggle } from '../case/schema.js';
-import { notImplemented } from '../run/errors.js';
+import { assertionFailureCounts } from '../report/reporter.js';
 import type { SuiteReport } from '../run/types.js';
 
 /** What the case promised for this assertion under the active toggles. */
@@ -59,7 +58,13 @@ export function matrixEntryVerdict(
   expected: MatrixExpectation,
   redRuns: number,
 ): Exclude<MatrixEntryVerdict, 'void'> {
-  return notImplemented(`matrixEntryVerdict(${expected}, ${redRuns})`);
+  if (expected === 'green' && redRuns > 0) {
+    return 'unexpected-red';
+  }
+  if (expected === 'red' && redRuns <= 0) {
+    return 'missed-red';
+  }
+  return 'as-expected';
 }
 
 /**
@@ -76,5 +81,62 @@ export function faultMatrixResult(
   cases: readonly EvalCase[],
   report: SuiteReport,
 ): MatrixResult {
-  return notImplemented(`faultMatrixResult over ${cases.length} case(s) in ${report.cases.length}`);
+  const missingCase = report.cases.find(
+    (repCase) => !cases.find((evalCase) => repCase.caseId === evalCase.id),
+  );
+  if (missingCase)
+    throw new Error(
+      `Invalid parameters: report case not found among eval cases. ${missingCase.caseId}`,
+    );
+
+  const quarantined = new Set(report.cases.filter((c) => c.quarantined).map((c) => c.caseId));
+
+  const entries: MatrixEntry[] = cases.flatMap((evalCase) => {
+    const reportCase = report.cases.find((outcome) => outcome.caseId === evalCase.id);
+    if (!reportCase) {
+      throw new Error(`Invalid parameters: eval case not found in reports. ${evalCase.id}`);
+    }
+
+    const failureCounts = assertionFailureCounts(reportCase);
+
+    if (reportCase.verdict === 'error') {
+      // all entries are void
+      return evalCase.assertions.map((evalAssrt): MatrixEntry => ({
+        caseId: evalCase.id,
+        assertionId: evalAssrt.id,
+        expected: evalAssrt.expectRedUnder.some((toggle) => faultToggles.includes(toggle))
+          ? 'red'
+          : 'green',
+        runs: reportCase.runs.length,
+        redRuns: failureCounts.get(evalAssrt.id) ?? 0,
+        verdict: 'void',
+        quarantined: quarantined.has(evalCase.id),
+      }));
+    }
+
+    return evalCase.assertions.map((evalAssrt): MatrixEntry => {
+      const expected = evalAssrt.expectRedUnder.some((toggle) => faultToggles.includes(toggle))
+        ? 'red'
+        : 'green';
+      const redRuns = failureCounts.get(evalAssrt.id) ?? 0;
+
+      return {
+        caseId: evalCase.id,
+        assertionId: evalAssrt.id,
+        expected,
+        runs: reportCase.runs.length,
+        redRuns,
+        verdict: matrixEntryVerdict(expected, redRuns),
+        quarantined: quarantined.has(evalCase.id),
+      };
+    });
+  });
+
+  return {
+    faultToggles,
+    entries,
+    passed: !entries
+      .filter((entry) => !entry.quarantined && entry.verdict !== 'void')
+      .some((entry) => entry.verdict !== 'as-expected'),
+  };
 }
