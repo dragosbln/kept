@@ -86,7 +86,20 @@ function describeOutcome(outcome: CaseOutcome, evalCase: EvalCase | undefined): 
   return lines;
 }
 
-export function formatSuiteReport(report: SuiteReport, cases: readonly EvalCase[] = []): string {
+export type SuiteReportOptions = {
+  /**
+   * Whether the suite's verdicts decide the job. Under a fault toggle they
+   * do not: reds are the point and the matrix decides, so the trailing line
+   * says so instead of printing an exit code nobody acts on. Default true.
+   */
+  gating?: boolean;
+};
+
+export function formatSuiteReport(
+  report: SuiteReport,
+  cases: readonly EvalCase[] = [],
+  options: SuiteReportOptions = {},
+): string {
   const byId = new Map(cases.map((evalCase) => [evalCase.id, evalCase]));
   const tally = { passed: 0, failed: 0, flaky: 0, error: 0, quarantined: 0 };
   for (const outcome of report.cases) {
@@ -102,7 +115,11 @@ export function formatSuiteReport(report: SuiteReport, cases: readonly EvalCase[
   const body = report.cases.flatMap((outcome) =>
     describeOutcome(outcome, byId.get(outcome.caseId)),
   );
-  return [header, ...body, summary, `exit ${exitCodeFor(report)}`].join('\n');
+  const footer =
+    options.gating === false
+      ? 'not gating: reds are expected under a toggle, the matrix below decides'
+      : `exit ${exitCodeFor(report)}`;
+  return [header, ...body, summary, footer].join('\n');
 }
 
 // --- The matrix ---------------------------------------------------------------

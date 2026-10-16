@@ -92,6 +92,7 @@ export {
   formatMatrixReport,
   formatSuiteReport,
 } from './report/reporter.js';
+export type { SuiteReportOptions } from './report/reporter.js';
 
 export { faultMatrixResult, matrixEntryVerdict } from './matrix/matrix.js';
 export type {

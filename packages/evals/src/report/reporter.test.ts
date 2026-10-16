@@ -78,6 +78,25 @@ describe('formatSuiteReport', () => {
     expect(text).toContain('1 passed, 0 failed, 1 flaky, 1 error, 1 quarantined');
     expect(text.endsWith('exit 1')).toBe(true);
   });
+
+  it('under a toggle the suite does not gate: the footer says so instead of an exit code', () => {
+    const red: CaseOutcome = {
+      caseId: 'red-case',
+      verdict: 'failed',
+      runs: [failed('cap', 'over')],
+      quarantined: false,
+    };
+    const text = formatSuiteReport(
+      { ...report([red]), config: { runs: 3, faultToggles: ['caps-per-call-only'] } },
+      [],
+      { gating: false },
+    );
+    expect(text).toContain('toggles: caps-per-call-only');
+    expect(
+      text.endsWith('not gating: reds are expected under a toggle, the matrix below decides'),
+    ).toBe(true);
+    expect(text).not.toMatch(/\nexit \d$/);
+  });
 });
 
 // The matrix section, over a literal MatrixResult: the fold itself is

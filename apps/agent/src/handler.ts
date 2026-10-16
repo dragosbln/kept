@@ -324,6 +324,24 @@ function buildModelClient(
 
 type RetrievalHandle = { service: RetrievalService; close: () => Promise<void> };
 
+/** The toggle sets this process has already warned about, so the eval runner's one boot per run warns once. */
+const warnedToggleSets = new Set<string>();
+
+/**
+ * Loud on purpose: a fault toggle in a merchant's process is an incident.
+ * Once per distinct set per process: a merchant boots once and hears it,
+ * the eval runner boots a service per run and hears it once per job.
+ */
+function warnAboutFaultToggles(faultToggles: readonly FaultToggle[]): void {
+  if (faultToggles.length === 0) return;
+  const key = faultToggles.join(', ');
+  if (warnedToggleSets.has(key)) return;
+  warnedToggleSets.add(key);
+  console.warn(
+    `agent service: FAULT TOGGLES ON (${key}) — the trust layer is deliberately broken for an eval; never run customers against this`,
+  );
+}
+
 export const POLICY_SEARCH_OFF_WARNING =
   'agent service: DATABASE_URL unset — policy search is OFF, every policy question is escalated. To turn it on: pnpm stack:db, set DATABASE_URL and OPENAI_API_KEY in .env, then pnpm db:migrate && pnpm kb:ingest';
 
@@ -458,12 +476,7 @@ export async function createAgentService(
   );
   const now = deps.now ?? Date.now;
   const faultToggles = config.faultToggles ?? [];
-  if (faultToggles.length > 0) {
-    // Loud on purpose: a fault toggle in a merchant's process is an incident.
-    console.warn(
-      `agent service: FAULT TOGGLES ON (${faultToggles.join(', ')}) — the trust layer is deliberately broken for an eval; never run customers against this`,
-    );
-  }
+  warnAboutFaultToggles(faultToggles);
   const backend = deps.backend ?? getBackend(config.backendKind, now);
   // One ledger per process, shared by every conversation: per-customer and
   // per-day caps, and the cross-conversation attacks, all depend on that.

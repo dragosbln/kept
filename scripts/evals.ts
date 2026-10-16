@@ -391,7 +391,7 @@ async function main(): Promise<void> {
   });
   await langfuse?.flush();
 
-  console.log(formatSuiteReport(report, cases));
+  console.log(formatSuiteReport(report, cases, { gating: faultToggles.length === 0 }));
 
   // Under a toggle the suite's reds are the point; the verdict is the matrix's.
   const matrix =
