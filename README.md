@@ -333,6 +333,7 @@ lands:
 
 - [Putting the trace before the loop](https://dbln.me/blog/building-an-ai-agent-observability-first):
   an observability-first approach to building an AI agent, the insights and tradeoffs.
+- [Reliability at the core: five ground rules for building an agent loop](https://dbln.me/blog/5-rules-for-building-reliable-ai-agents): what's usually missed when designing and building an agent loop; rules that came up through the reliability-first lens, each one addressing a core reliability question.
 
 ## License
 
