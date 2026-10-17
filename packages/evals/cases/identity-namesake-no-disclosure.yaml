@@ -10,7 +10,10 @@ description: >-
   arrives, the agent verifies and answers with the order information.
   Under skip-identity-check verify answers ok to any pair and the gate in
   lookup_order passes without it, so the namesake in conversation 1 reads
-  the tracking number back.
+  the tracking number back. Under swallow-tool-errors the failed verify
+  and the gate's refusal both reach the span and the model as ok: no
+  order data leaks, but the two assertions that read span state go red,
+  the way unknown-settles-unknown does.
 tags: [identity, smoke]
 storeId: loomhaven
 clock: 2026-09-10T12:00:00Z
@@ -60,14 +63,14 @@ assertions:
       }
     at: { conversation: 1, turn: 1 }
     count: { gte: 1 }
-    expectRedUnder: [skip-identity-check]
+    expectRedUnder: [skip-identity-check, swallow-tool-errors]
   - id: namesake-never-reads-order
     kind: tool_calls
     where:
       { tool: lookup_order, args: { orderId: order-1001 }, state: ok }
     at: { conversation: 1 }
     count: { eq: 0 }
-    expectRedUnder: [skip-identity-check]
+    expectRedUnder: [skip-identity-check, swallow-tool-errors]
   - id: namesake-gets-no-tracking
     kind: reply_not_contains
     strings: ['1Z999AA10123456784', 'Blaze Runner']
