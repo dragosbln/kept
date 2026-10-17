@@ -12,6 +12,7 @@ import { defineTool } from '../tools/utils.js';
 import type { ToolRegistry } from '../tools/types.js';
 import { Trace } from '../tracing/trace.js';
 import type { StartPolicyDecisionPayload, StartRetrievalPayload } from '../tracing/types.js';
+import { createConversationIdentity } from '../identity/identity.js';
 
 const schema = z.object({ orderId: z.string().trim() });
 
@@ -39,6 +40,7 @@ function registryWith(execute: Execute): ToolRegistry {
     lookup_order: defineTool({ description: 'test tool', inputSchema: schema, execute }),
     issue_refund: unreachableRefund,
     search_policy: unreachableSearch,
+    verify_identity: unreachableSearch,
   };
 }
 
@@ -59,6 +61,7 @@ const context = {
   promptHash: 'hash-executor-test',
   storeId: 'loomhaven',
   asOf: Date.UTC(2026, 8, 21),
+  identity: createConversationIdentity(),
   startPolicyDecisionSpan: (payload: StartPolicyDecisionPayload) =>
     scratchTrace().startPolicyDecisionSpan(null, payload),
   startRetrievalSpan: (payload: StartRetrievalPayload) =>
@@ -104,6 +107,7 @@ describe('executeToolCall', () => {
       promptHash: 'hash-distinct',
       storeId: context.storeId,
       asOf: context.asOf,
+      identity: context.identity,
       startPolicyDecisionSpan: context.startPolicyDecisionSpan,
       startRetrievalSpan: context.startRetrievalSpan,
       args: { orderId: 'order-7' },

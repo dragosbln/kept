@@ -213,6 +213,7 @@ describe('OpenAIModelClient request shape', () => {
       'lookup_order',
       'issue_refund',
       'search_policy',
+      'verify_identity',
     ]);
     expect(tools[0]).toEqual({
       type: 'function',

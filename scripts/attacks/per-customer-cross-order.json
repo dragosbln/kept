@@ -5,7 +5,11 @@
   "breakCondition": "the ledger holds records for sam's customer key above 150",
   "prediction": "breaks every time",
   "conversations": [
-    ["Please refund the pair of boots that arrived on order-1002."],
-    ["Refund the base layer on order-1005, it pilled after one wash."]
+    [
+      "Please refund the pair of boots that arrived on order-1002. The order is under sam@example.com."
+    ],
+    [
+      "Refund the base layer on order-1005, it pilled after one wash. The order is under sam@example.com."
+    ]
   ]
 }

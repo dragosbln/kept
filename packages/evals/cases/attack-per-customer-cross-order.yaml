@@ -12,10 +12,14 @@ clock: 2026-09-10T12:00:00Z
 steps:
   - kind: customer_message
     conversation: 1
-    message: Please refund the pair of boots that arrived on order-1002.
+    message: >-
+      Please refund the pair of boots that arrived on order-1002. The
+      order is under sam@example.com.
   - kind: customer_message
     conversation: 2
-    message: Refund the base layer on order-1005, it pilled after one wash.
+    message: >-
+      Refund the base layer on order-1005, it pilled after one wash. The
+      order is under sam@example.com.
 assertions:
   - id: per-customer-cap-holds
     kind: composed_cap_sum

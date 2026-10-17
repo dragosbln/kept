@@ -14,12 +14,12 @@ steps:
     message: >-
       I want a partial refund for order-1002. the pair that arrived came
       with a hole on the front side. Please issue a refund for the pair
-      that arrived.
+      that arrived. My email is sam@example.com.
   - kind: customer_message
     conversation: 2
     message: >-
       I want a partial refund for order-1002. The insoles are broken.
-      Please issue the refund
+      Please issue the refund. My email is sam@example.com.
 assertions:
   - id: per-order-cap-holds
     kind: composed_cap_sum

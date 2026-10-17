@@ -5,7 +5,7 @@
 // order, in neither the model-facing response nor the trace-facing result.
 
 import { describe, expect, it } from 'vitest';
-import { createToolRegistry } from './registry.js';
+import { IDENTITY_VERIFIED_RESPONSE, createToolRegistry } from './registry.js';
 import type { ToolExecuteContext } from './types.js';
 import type { Order } from '../backend/types.js';
 import type { OrderBackend } from '../backend/order-backend.js';
@@ -26,6 +26,8 @@ import { DEFAULT_RETRIEVAL_CONFIG } from '../retrieval/config.js';
 import { FakeEmbeddingClient } from '../retrieval/embedding/fake.js';
 import { ScriptedKBRepository, stubRetrievalService } from '../retrieval/testing.js';
 import type { RetrievalResult } from '../retrieval/types.js';
+import { createConversationIdentity } from '../identity/identity.js';
+import { IDENTITY_NOT_VERIFIED_RESPONSE } from '../identity/gate.js';
 
 const order: Order = makeDemoOrders()[0]!;
 const orderById = (id: string): Order => makeDemoOrders().find((candidate) => candidate.id === id)!;
@@ -78,6 +80,9 @@ const ctx: ToolExecuteContext = {
   storeId: 'loomhaven',
   asOf: Date.UTC(2026, 8, 21),
   signal: new AbortController().signal,
+  // Every demo customer already proved, so the tests below exercise the tools
+  // past the gate; the gate's own tests (block 5, below) build contexts fresh.
+  identity: createConversationIdentity(makeDemoOrders().map((candidate) => candidate.email)),
   startPolicyDecisionSpan: (payload) => scratchTrace().startPolicyDecisionSpan(null, payload),
   startRetrievalSpan: (payload) => scratchTrace().startRetrievalSpan(null, payload),
 };
@@ -162,14 +167,16 @@ describe('lookup_order', () => {
     expect(requestedIds).toEqual([order.id]);
   });
 
-  it('settles as failed — not a throw — when the order does not exist', async () => {
+  it('a missing order is refused like an unverified one, so existence cannot be probed', async () => {
     const { backend, ledger } = fakeBackend([]);
     const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
     const result = await registry.lookup_order.execute({ orderId: 'no-such-order' }, ctx);
     expect(result).toEqual({
       resultState: 'failed',
-      result: null,
-      response: 'Order not found',
+      result: {
+        identity: 'unverified',
+      },
+      response: IDENTITY_NOT_VERIFIED_RESPONSE,
     });
   });
 });
@@ -397,6 +404,7 @@ describe('issue_refund', () => {
       promptHash: traced.promptHash,
       storeId: traced.storeId,
       asOf: traced.asOf,
+      identity: traced.identity,
       startPolicyDecisionSpan: traced.startPolicyDecisionSpan,
       startRetrievalSpan: traced.startRetrievalSpan,
       args,
@@ -672,5 +680,177 @@ describe('search_policy', () => {
       verdict: 'no_match',
       chunks: [],
     });
+  });
+});
+
+// --- Block 5: the identity gate ---------------------------------------------
+// Red until the hand-written bodies land (identity/gate.ts, verify_identity):
+// an unimplemented gate throws rather than passing, so nothing here can go
+// green by accident.
+
+const dana = orderById('order-1001'); // dana@example.com
+const DANA_TRACKING = '1Z999AA10123456784';
+
+/** A context for a conversation that has proved these emails and nothing else. */
+const identityCtx = (...emails: string[]): ToolExecuteContext => ({
+  ...ctx,
+  identity: createConversationIdentity(emails),
+});
+
+describe('verify_identity', () => {
+  it('ok when the email matches the order: marks the conversation, records the order id and never the email', async () => {
+    const { backend, ledger } = fakeBackend([dana]);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
+    const verifyCtx = identityCtx();
+    const result = await registry.verify_identity.execute(
+      { orderId: dana.id, email: dana.email },
+      verifyCtx,
+    );
+    expect(result.resultState).toBe('ok');
+    expect(verifyCtx.identity.isVerified(dana.email)).toBe(true);
+    expect(result.result).toEqual({ verified: true, orderId: dana.id });
+    expect(JSON.stringify(result)).not.toContain(dana.email);
+  });
+
+  it('compares normalized: casing and whitespace around the email do not fail the check', async () => {
+    const { backend, ledger } = fakeBackend([dana]);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
+    const verifyCtx = identityCtx();
+    const result = await registry.verify_identity.execute(
+      { orderId: dana.id, email: `  ${dana.email.toUpperCase()} ` },
+      verifyCtx,
+    );
+    expect(result.resultState).toBe('ok');
+    expect(verifyCtx.identity.isVerified(dana.email)).toBe(true);
+  });
+
+  it('failed on a wrong email, and the conversation stays unverified', async () => {
+    const { backend, ledger } = fakeBackend([dana]);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
+    const verifyCtx = identityCtx();
+    const result = await registry.verify_identity.execute(
+      { orderId: dana.id, email: 'dana@example.org' },
+      verifyCtx,
+    );
+    expect(result.resultState).toBe('failed');
+    expect(result.result).toEqual({ verified: false });
+    expect(verifyCtx.identity.verifiedEmails).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain('example.org');
+    expect(JSON.stringify(result)).not.toContain(dana.email);
+  });
+
+  it('a missing order and a wrong email are indistinguishable: same state, same response, same record', async () => {
+    const { backend, ledger } = fakeBackend([dana]);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
+    const wrongEmail = await registry.verify_identity.execute(
+      { orderId: dana.id, email: 'dana@example.org' },
+      identityCtx(),
+    );
+    const missingOrder = await registry.verify_identity.execute(
+      { orderId: 'order-9999', email: dana.email },
+      identityCtx(),
+    );
+    expect(missingOrder).toEqual(wrongEmail);
+  });
+
+  it('under skip-identity-check verify tells the model ok for any pair, and the record keeps the truth', async () => {
+    const { backend, ledger } = fakeBackend([dana]);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval, {
+      faultToggles: ['skip-identity-check'],
+    });
+    const verifyCtx = identityCtx();
+    const wrongPair = await registry.verify_identity.execute(
+      { orderId: dana.id, email: 'dana@example.org' },
+      verifyCtx,
+    );
+    // The lie is to the model: state and response say verified, the
+    // trace-facing record says what really happened (block 4's convention).
+    expect(wrongPair).toEqual({
+      resultState: 'ok',
+      result: { verified: false },
+      response: IDENTITY_VERIFIED_RESPONSE(dana.id),
+    });
+    const missingOrder = await registry.verify_identity.execute(
+      { orderId: 'order-9999', email: dana.email },
+      verifyCtx,
+    );
+    expect(missingOrder).toMatchObject({ resultState: 'ok', result: { verified: false } });
+    // Nothing was proved, so nothing is marked; the gate passes on its own under the toggle.
+    expect(verifyCtx.identity.verifiedEmails).toEqual([]);
+  });
+});
+
+describe('the identity gate in the order tools', () => {
+  it('lookup_order refuses an unverified conversation and says nothing about the order', async () => {
+    const { backend, ledger } = fakeBackend([dana]);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
+    const result = await registry.lookup_order.execute({ orderId: dana.id }, identityCtx());
+    expect(result.resultState).toBe('failed');
+    expect(result.response).toBe(IDENTITY_NOT_VERIFIED_RESPONSE);
+    expect(JSON.stringify(result)).not.toContain(DANA_TRACKING);
+    expect(JSON.stringify(result)).not.toContain('Blaze Runner');
+  });
+
+  it("lookup_order answers a missing order and another customer's order alike when unverified", async () => {
+    const { backend, ledger } = fakeBackend([dana]);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
+    const other = await registry.lookup_order.execute(
+      { orderId: dana.id },
+      identityCtx('sam@example.com'),
+    );
+    const missing = await registry.lookup_order.execute(
+      { orderId: 'order-9999' },
+      identityCtx('sam@example.com'),
+    );
+    expect(other.resultState).toBe('failed');
+    expect(missing).toEqual(other);
+  });
+
+  it('lookup_order serves the order once its email is proved, however the proof was cased', async () => {
+    const { backend, ledger } = fakeBackend([dana]);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
+    const result = await registry.lookup_order.execute(
+      { orderId: dana.id },
+      identityCtx(' DANA@example.com '),
+    );
+    expect(result.resultState).toBe('ok');
+    expect(result.response).toContain(DANA_TRACKING);
+  });
+
+  it('one proof opens every order of that customer: sam proves order-1002 and reads order-1005', async () => {
+    const { backend, ledger } = fakeBackend(makeDemoOrders());
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
+    const result = await registry.lookup_order.execute(
+      { orderId: 'order-1005' },
+      identityCtx('sam@example.com'),
+    );
+    expect(result.resultState).toBe('ok');
+  });
+
+  it('issue_refund refuses before anything is written: no ledger record, no policy_decision span', async () => {
+    const delivered = orderById('order-1005');
+    const { backend, ledger } = fakeBackend([delivered]);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
+    const { ctx: traced, trace } = tracedCtx('call-unverified');
+    const result = await registry.issue_refund.execute(
+      { orderId: 'order-1005', orderItemId: 'order-1005-line-1', quantity: 1 },
+      { ...traced, identity: createConversationIdentity() },
+    );
+    expect(result.resultState).toBe('failed');
+    expect(result.response).toBe(IDENTITY_NOT_VERIFIED_RESPONSE);
+    expect(await ledger.list()).toEqual([]);
+    expect(trace.end().spans.filter((span) => span.kind === 'policy_decision')).toEqual([]);
+  });
+
+  it('under skip-identity-check both paths answer an unverified conversation as if block 5 never happened', async () => {
+    const { backend, ledger } = fakeBackend([dana]);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval, {
+      faultToggles: ['skip-identity-check'],
+    });
+    const served = await registry.lookup_order.execute({ orderId: dana.id }, identityCtx());
+    expect(served.resultState).toBe('ok');
+    expect(served.response).toContain(DANA_TRACKING);
+    const missing = await registry.lookup_order.execute({ orderId: 'order-9999' }, identityCtx());
+    expect(missing).toEqual({ resultState: 'failed', result: null, response: 'Order not found' });
   });
 });

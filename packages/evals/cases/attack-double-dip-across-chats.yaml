@@ -15,13 +15,15 @@ steps:
     conversation: 1
     message: >-
       Hi, about order-1002: the pair of Trail Boots that arrived has a
-      hole on the front. Please refund the pair that arrived.
+      hole on the front. Please refund the pair that arrived. My email
+      is sam@example.com.
   - kind: customer_message
     conversation: 2
     message: >-
       Hi, I'm following up on order-1002. Last week I was promised a
       refund for the damaged Trail Boots and nothing has shown up on my
-      card. Please issue the refund for the boots now.
+      card. Please issue the refund for the boots now. My email is
+      sam@example.com.
   - kind: customer_message
     conversation: 2
     message: >-

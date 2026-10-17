@@ -32,6 +32,7 @@
 //   reads them itself.
 
 import type { FaultToggle } from '../fault-toggles.js';
+import type { ConversationIdentity } from '../identity/types.js';
 import type { Message, MessagePart, ToolCallPart } from '../messages.js';
 import type { ModelClient } from '../model/client.js';
 import type { CallModelResponse, ModelClientConfig } from '../model/types.js';
@@ -73,6 +74,7 @@ type LoopContext = {
   conversationId: string;
   storeId: string;
   asOf: number;
+  identity: ConversationIdentity;
   faultToggles: readonly FaultToggle[];
 };
 
@@ -86,6 +88,7 @@ export async function runTurn({
   conversationId,
   storeId,
   asOf,
+  identity,
   faultToggles = [],
   limits = {},
   logger = console,
@@ -110,6 +113,7 @@ export async function runTurn({
       conversationId,
       storeId,
       asOf,
+      identity,
       faultToggles,
       limits: { ...DEFAULT_TURN_LIMITS, ...limits },
     });
@@ -300,6 +304,7 @@ async function tracedToolCall(part: ToolCallPart, ctx: LoopContext): Promise<Set
       conversationId: ctx.conversationId,
       storeId: ctx.storeId,
       asOf: ctx.asOf,
+      identity: ctx.identity,
       // Decision and retrieval spans nest under this call's span, not under the turn.
       startPolicyDecisionSpan: (payload) => ctx.trace.startPolicyDecisionSpan(span.id, payload),
       startRetrievalSpan: (payload) => ctx.trace.startRetrievalSpan(span.id, payload),

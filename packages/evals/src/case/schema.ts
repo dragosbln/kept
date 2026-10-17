@@ -50,6 +50,7 @@ const TOOL_NAMES = [
   'lookup_order',
   'issue_refund',
   'search_policy',
+  'verify_identity',
 ] as const satisfies readonly ToolName[];
 
 const TOOL_RESULT_STATES = [
