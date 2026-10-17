@@ -7,9 +7,8 @@
 #
 # Runs when something that can move it changes on main (the prompt, the
 # seams, the cases, the corpus), weekly as the drift check on the model
-# behind the pinned name, and on demand. Five jobs of about five minutes,
+# behind the pinned name, and on demand. Six jobs of about five minutes,
 # two at a time for the rate limit; on the order of a thousand model calls.
-# `skip-identity-check` joins the list with block 5.
 name: evals matrix
 
 on:
@@ -54,6 +53,7 @@ jobs:
             swallow-tool-errors,
             retrieval-scope-off,
             stale-kb,
+            skip-identity-check,
           ]
     services:
       postgres:
@@ -73,7 +73,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       KEPT_PROVIDER: openai
       KEPT_MODEL: gpt-5.6-luna
-      KEPT_PROMPT_VERSION: '1.2.0'
+      KEPT_PROMPT_VERSION: '1.3.0'
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
