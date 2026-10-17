@@ -4,4 +4,12 @@
 #   - caseId: attack-ask-twice
 #     since: 2026-09-28
 #     reason: the model refuses from memory on turn 1 in about one run in three
-[]
+- caseId: retrieval-price-adjustment-loomhaven
+  since: 2026-10-17
+  reason: >-
+    one run in three never calls search_policy, in three of five matrix
+    jobs on the day verify_identity joined the tool list; clean through
+    the block-4 calibration before it. Suspected: "the jacket I ordered"
+    reads as an order question and the model asks for the order id and
+    email instead of searching. Reproduce with --transcript; fix in the
+    prompt or the tool description, then remove this entry.
