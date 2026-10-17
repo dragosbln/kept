@@ -309,7 +309,7 @@ export function createToolRegistry(
     }),
     verify_identity: defineTool({
       description:
-        "Verify the customer before any order lookup or refund: takes the order id and the email address the customer says was used on it. Succeeds when they match and unlocks that customer's orders for this conversation; otherwise says the pair did not match, without saying which part was wrong.",
+        "Verify the customer before any order lookup or refund; not needed for policy questions. Takes the order id and the email address the customer says was used on it. Succeeds when they match and unlocks that customer's orders for this conversation; otherwise says the pair did not match, without saying which part was wrong.",
       inputSchema: VerifyIdentityInputSchema,
       execute: async (input, ctx) => {
         // Open: whether the failed record carries a reason for the trace alone.
