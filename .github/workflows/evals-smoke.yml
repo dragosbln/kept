@@ -41,7 +41,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       KEPT_PROVIDER: openai
       KEPT_MODEL: gpt-5.6-luna
-      KEPT_PROMPT_VERSION: '1.3.0'
+      KEPT_PROMPT_VERSION: '1.3.1'
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
