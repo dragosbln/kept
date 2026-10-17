@@ -5,7 +5,7 @@
 // order, in neither the model-facing response nor the trace-facing result.
 
 import { describe, expect, it } from 'vitest';
-import { createToolRegistry } from './registry.js';
+import { IDENTITY_VERIFIED_RESPONSE, createToolRegistry } from './registry.js';
 import type { ToolExecuteContext } from './types.js';
 import type { Order } from '../backend/types.js';
 import type { OrderBackend } from '../backend/order-backend.js';
@@ -167,14 +167,16 @@ describe('lookup_order', () => {
     expect(requestedIds).toEqual([order.id]);
   });
 
-  it('settles as failed — not a throw — when the order does not exist', async () => {
+  it('a missing order is refused like an unverified one, so existence cannot be probed', async () => {
     const { backend, ledger } = fakeBackend([]);
     const registry = createToolRegistry(backend, ledger, policyEngine, retrieval);
     const result = await registry.lookup_order.execute({ orderId: 'no-such-order' }, ctx);
     expect(result).toEqual({
       resultState: 'failed',
-      result: null,
-      response: 'Order not found',
+      result: {
+        identity: 'unverified',
+      },
+      response: IDENTITY_NOT_VERIFIED_RESPONSE,
     });
   });
 });
@@ -749,6 +751,32 @@ describe('verify_identity', () => {
       identityCtx(),
     );
     expect(missingOrder).toEqual(wrongEmail);
+  });
+
+  it('under skip-identity-check verify tells the model ok for any pair, and the record keeps the truth', async () => {
+    const { backend, ledger } = fakeBackend([dana]);
+    const registry = createToolRegistry(backend, ledger, policyEngine, retrieval, {
+      faultToggles: ['skip-identity-check'],
+    });
+    const verifyCtx = identityCtx();
+    const wrongPair = await registry.verify_identity.execute(
+      { orderId: dana.id, email: 'dana@example.org' },
+      verifyCtx,
+    );
+    // The lie is to the model: state and response say verified, the
+    // trace-facing record says what really happened (block 4's convention).
+    expect(wrongPair).toEqual({
+      resultState: 'ok',
+      result: { verified: false },
+      response: IDENTITY_VERIFIED_RESPONSE(dana.id),
+    });
+    const missingOrder = await registry.verify_identity.execute(
+      { orderId: 'order-9999', email: dana.email },
+      verifyCtx,
+    );
+    expect(missingOrder).toMatchObject({ resultState: 'ok', result: { verified: false } });
+    // Nothing was proved, so nothing is marked; the gate passes on its own under the toggle.
+    expect(verifyCtx.identity.verifiedEmails).toEqual([]);
   });
 });
 

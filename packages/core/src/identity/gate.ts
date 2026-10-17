@@ -9,6 +9,7 @@ import type { Order } from '../backend/types.js';
 import type { FaultToggle } from '../fault-toggles.js';
 import type { ToolResult } from '../tools/types.js';
 import { settle } from '../tools/utils.js';
+import { normalizeEmail } from './identity.js';
 import type { ConversationIdentity } from './types.js';
 
 export type IdentityVerdict = 'verified' | 'unverified';
@@ -43,11 +44,15 @@ export function refuseUnverified(): ToolResult {
  *   the conversation's verified set (decisions 1 and 2).
  */
 export function identityVerdict(
-  _order: Pick<Order, 'email'> | null,
-  _identity: ConversationIdentity,
-  _toggles: readonly FaultToggle[],
+  order: Pick<Order, 'email'> | null,
+  identity: ConversationIdentity,
+  toggles: readonly FaultToggle[],
 ): IdentityVerdict {
-  // An unimplemented gate throws rather than passing: a skeleton that let
-  // every order out would read as a working gate (block 4's rule).
-  throw new Error('identity gate: hand-written in block 5');
+  if (toggles.includes('skip-identity-check')) {
+    return 'verified';
+  }
+  if (!order) {
+    return 'unverified';
+  }
+  return identity.isVerified(normalizeEmail(order.email)) ? 'verified' : 'unverified';
 }

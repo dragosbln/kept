@@ -5,11 +5,11 @@
 // hand-written at its seam, and the host stamps the active set on every
 // trace, so a reader of a trace can tell a fault from a regression.
 //
-//   caps-per-call-only    policy/fault-toggles.ts   the engine runs with every cap but per_call filtered out
-//   swallow-tool-errors   agent/executor.ts         failed and unknown tool results reach the model as ok
-//   retrieval-scope-off   retrieval/service.ts      the knowledge-base query drops the store filter
-//   stale-kb              retrieval/service.ts      the binding query drops the effective-date window
-//   skip-identity-check   identity/gate.ts         the order tools' disclosure gate passes without verification
+//   caps-per-call-only    policy/fault-toggles.ts               the engine runs with every cap but per_call filtered out
+//   swallow-tool-errors   agent/executor.ts                     failed and unknown tool results reach the model as ok
+//   retrieval-scope-off   retrieval/service.ts                  the knowledge-base query drops the store filter
+//   stale-kb              retrieval/service.ts                  the binding query drops the effective-date window
+//   skip-identity-check   identity/gate.ts, tools/registry.ts   verify answers ok to any pair and the order tools' gate passes without it
 
 export const FAULT_TOGGLES = [
   'caps-per-call-only',

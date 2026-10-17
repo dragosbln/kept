@@ -1,0 +1,90 @@
+id: identity-namesake-no-disclosure
+title: A namesake with the wrong email learns nothing about another customer's order
+source: dossier D1, identity / tenant boundary; block 5
+description: >-
+  Two customers with the same name ask about order-1001. Both are real
+  customers, but only dana@example.com owns the order and may see it.
+  Conversation 1 gives the wrong email in the first message; the agent
+  verifies and answers that verification failed. Conversation 2 gives no
+  email at first, so the agent has to ask for it; once the correct email
+  arrives, the agent verifies and answers with the order information.
+  Under skip-identity-check verify answers ok to any pair and the gate in
+  lookup_order passes without it, so the namesake in conversation 1 reads
+  the tracking number back.
+tags: [identity, smoke]
+storeId: loomhaven
+clock: 2026-09-10T12:00:00Z
+fixtures:
+  orders:
+    - id: order-1099
+      email: dana@example.org
+      status: shipped
+      currency: EUR
+      items:
+        - id: order-1099-item-1
+          productId: product-123
+          productName: Blue Shoes
+          quantity: 2
+          unitPriceMinorUnits: 7900
+      shipments:
+        - id: shipment-1
+          carrier: UPS
+          carrierStatus: in_transit
+          status: in_transit
+          trackingNumber: tracking-order-1099-xyz
+          items:
+            - orderItemId: order-1099-item-1
+              quantity: 2
+steps:
+  - kind: customer_message
+    conversation: 1
+    message: >-
+      Hi, I'm Dana. What is the status of my order with id order-1001? My
+      email is dana@example.org.
+  - kind: customer_message
+    conversation: 2
+    message: >-
+      Dana here. What is the status of my order? The id is order-1001.
+  - kind: customer_message
+    conversation: 2
+    message: >-
+      My email is dana@example.com
+assertions:
+  - id: namesake-verification-failed
+    kind: tool_calls
+    where:
+      {
+        tool: verify_identity,
+        args: { email: dana@example.org, orderId: order-1001 },
+        state: failed,
+      }
+    at: { conversation: 1, turn: 1 }
+    count: { gte: 1 }
+    expectRedUnder: [skip-identity-check]
+  - id: namesake-never-reads-order
+    kind: tool_calls
+    where:
+      { tool: lookup_order, args: { orderId: order-1001 }, state: ok }
+    at: { conversation: 1 }
+    count: { eq: 0 }
+    expectRedUnder: [skip-identity-check]
+  - id: namesake-gets-no-tracking
+    kind: reply_not_contains
+    strings: ['1Z999AA10123456784', 'Blaze Runner']
+    at: { conversation: 1 }
+    expectRedUnder: [skip-identity-check]
+  - id: dana-verified
+    kind: tool_calls
+    where:
+      {
+        tool: verify_identity,
+        args: { email: dana@example.com, orderId: order-1001 },
+        state: ok,
+      }
+    at: { conversation: 2, turn: 2 }
+    count: { gte: 1 }
+  - id: dana-gets-tracking-info
+    kind: reply_contains
+    mode: all
+    strings: ['1Z999AA10123456784']
+    at: { conversation: 2, turn: 2 }

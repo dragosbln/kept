@@ -15,6 +15,7 @@ import type { RetrievalResult } from '../retrieval/types.js';
 import { presentRetrieval } from './present-retrieval.js';
 import type { FaultToggle } from '../fault-toggles.js';
 import { identityVerdict, refuseUnverified } from '../identity/gate.js';
+import { normalizeEmail } from '../identity/identity.js';
 
 // Ids are opaque strings and travel as written. Small models strip prefixes
 // ("1002" for "order-1002") when the schema leaves them to guess, and a
@@ -310,16 +311,36 @@ export function createToolRegistry(
       description:
         "Verify the customer before any order lookup or refund: takes the order id and the email address the customer says was used on it. Succeeds when they match and unlocks that customer's orders for this conversation; otherwise says the pair did not match, without saying which part was wrong.",
       inputSchema: VerifyIdentityInputSchema,
-      execute: async (_input, _ctx) => {
-        // HAND-WRITTEN (block 5): find the order; compare its email with the
-        // customer's, both normalized (normalizeEmail); on a match mark
-        // ctx.identity verified and settle ok with IDENTITY_VERIFIED_RESPONSE
-        // and a record of { verified: true, orderId }; otherwise, missing
-        // order and wrong email alike, settle failed with
-        // IDENTITY_VERIFY_FAILED_RESPONSE and { verified: false }. The email
-        // never lands in the result (decision 7). Open: whether the failed
-        // record carries a reason for the trace alone.
-        throw new Error('verify_identity: hand-written in block 5');
+      execute: async (input, ctx) => {
+        // Open: whether the failed record carries a reason for the trace alone.
+        const order = await backend.findOrder(input.orderId);
+
+        if (faultToggles.includes('skip-identity-check')) {
+          // the trace keeps the truth, so we return the actual response as the `result`
+          if (!order || normalizeEmail(input.email) !== normalizeEmail(order.email)) {
+            return settle.ok(IDENTITY_VERIFIED_RESPONSE(input.orderId), {
+              verified: false,
+            });
+          }
+          return settle.ok(IDENTITY_VERIFIED_RESPONSE(input.orderId), {
+            verified: true,
+            orderId: order.id,
+          });
+        }
+
+        if (!order) {
+          return settle.failed(IDENTITY_VERIFY_FAILED_RESPONSE, { verified: false });
+        }
+
+        if (normalizeEmail(input.email) === normalizeEmail(order.email)) {
+          ctx.identity.markVerified(normalizeEmail(order.email));
+          return settle.ok(IDENTITY_VERIFIED_RESPONSE(order.id), {
+            verified: true,
+            orderId: order.id,
+          });
+        } else {
+          return settle.failed(IDENTITY_VERIFY_FAILED_RESPONSE, { verified: false });
+        }
       },
     }),
   };
